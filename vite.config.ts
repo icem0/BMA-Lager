@@ -1,7 +1,55 @@
 import vue from '@vitejs/plugin-vue'
 import { defineConfig } from 'vite'
+import { VitePWA } from 'vite-plugin-pwa'
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [vue()],
+  plugins: [
+    vue(),
+    VitePWA({
+      registerType: 'autoUpdate',
+      injectRegister: 'auto',
+      // SW-Generierung nur für den Production-Build; im Dev stört der SW den Vite-HMR.
+      devOptions: { enabled: false },
+      includeAssets: ['favicon.svg', 'pwa-icon.svg'],
+      manifest: {
+        name: 'BMA-Lager',
+        short_name: 'BMA-Lager',
+        description: 'Offline-fähige Lagerverwaltung auf Basis IndexedDB.',
+        lang: 'de-DE',
+        start_url: '/',
+        scope: '/',
+        display: 'standalone',
+        orientation: 'portrait',
+        background_color: '#ffffff',
+        theme_color: '#0b3d91',
+        icons: [
+          { src: 'pwa-icon.svg', sizes: '192x192', type: 'image/svg+xml' },
+          { src: 'pwa-icon.svg', sizes: '512x512', type: 'image/svg+xml', purpose: 'any' },
+          { src: 'pwa-icon.svg', sizes: '512x512', type: 'image/svg+xml', purpose: 'maskable' },
+        ],
+      },
+      workbox: {
+        // App-Shell precachen.
+        globPatterns: ['**/*.{js,css,html,svg,png,ico,woff2}'],
+        // Bilder: CacheFirst mit Größenlimit (60 Einträge, 30 Tage).
+        runtimeCaching: [
+          {
+            urlPattern: ({ request }) => request.destination === 'image',
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'bma-images',
+              expiration: {
+                maxEntries: 60,
+                maxAgeSeconds: 60 * 60 * 24 * 30,
+              },
+            },
+          },
+        ],
+        // Navigation-Fallback für SPA-Routing im Offline-Modus.
+        navigateFallback: '/index.html',
+        navigateFallbackDenylist: [/^\/api\//],
+      },
+    }),
+  ],
 })
