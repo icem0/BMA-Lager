@@ -38,13 +38,14 @@ export async function syncRoutes(app: FastifyInstance): Promise<void> {
         return reply.code(400).send({ code: 'VALIDATION', issues: parsed.error.issues })
       }
       const since = parsed.data.since ? new Date(parsed.data.since) : new Date(0)
+      const sinceIso = since.toISOString()
       const db = getDb()
 
       const [artikelRows, standortRows, projektRows, buchungRows] = await Promise.all([
-        db.select().from(artikel).where(sql`${artikel.geaendertAm} > ${since}`),
-        db.select().from(standorte).where(sql`${standorte.geaendertAm} > ${since}`),
-        db.select().from(projekte).where(sql`${projekte.geaendertAm} > ${since}`),
-        db.select().from(buchungen).where(sql`${buchungen.erstelltAm} > ${since}`),
+        db.select().from(artikel).where(sql`${artikel.geaendertAm} > ${sinceIso}`),
+        db.select().from(standorte).where(sql`${standorte.geaendertAm} > ${sinceIso}`),
+        db.select().from(projekte).where(sql`${projekte.geaendertAm} > ${sinceIso}`),
+        db.select().from(buchungen).where(sql`${buchungen.erstelltAm} > ${sinceIso}`),
       ])
 
       return reply.send({
