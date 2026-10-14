@@ -115,11 +115,46 @@ function zeigeInfo(): void {
 const versionLabel = `v${version} · ${commit}`
 const buildDateFormatiert = new Date(buildDate).toLocaleString()
 const versionOffen = ref(false)
+const copyStatus = ref<'idle' | 'ok' | 'fehler'>('idle')
+let copyResetTimer: ReturnType<typeof setTimeout> | null = null
+
+// Einzeiliger Build-String fuer Copy/Paste in Bug-Reports o. ae.
+// Format: bma-lager v0.1.0 (commit f0ad4fe, branch main, built 14.10.2026 12:55:22)
+const versionString = `bma-lager v${version} (commit ${commit}, branch ${branch}, built ${buildDateFormatiert})`
+
 function toggleVersion(): void {
   versionOffen.value = !versionOffen.value
 }
 function closeVersion(): void {
   versionOffen.value = false
+}
+
+async function copyVersion(): Promise<void> {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(versionString)
+    } else {
+      // Fallback fuer aelteres Browser/WebView ohne Clipboard-API.
+      const ta = document.createElement('textarea')
+      ta.value = versionString
+      ta.setAttribute('readonly', '')
+      ta.style.position = 'absolute'
+      ta.style.left = '-9999px'
+      document.body.appendChild(ta)
+      ta.select()
+      const ok = document.execCommand('copy')
+      document.body.removeChild(ta)
+      if (!ok) throw new Error('execCommand(copy) fehlgeschlagen')
+    }
+    copyStatus.value = 'ok'
+  } catch {
+    copyStatus.value = 'fehler'
+  } finally {
+    if (copyResetTimer !== null) clearTimeout(copyResetTimer)
+    copyResetTimer = setTimeout(() => {
+      copyStatus.value = 'idle'
+    }, 2000)
+  }
 }
 </script>
 
@@ -270,7 +305,14 @@ function closeVersion(): void {
           <dd>{{ buildDateFormatiert }}</dd>
         </div>
       </dl>
-      <button type="button" @click="closeVersion">Schließen</button>
+      <div class="version-actions">
+        <button type="button" class="copy-btn" @click="copyVersion" :title="versionString">
+          <span v-if="copyStatus === 'idle'">In Zwischenablage kopieren</span>
+          <span v-else-if="copyStatus === 'ok'">Kopiert ✓</span>
+          <span v-else>Kopieren fehlgeschlagen</span>
+        </button>
+        <button type="button" @click="closeVersion">Schließen</button>
+      </div>
     </div>
   </section>
 </template>
@@ -368,5 +410,33 @@ function closeVersion(): void {
   font-family: var(--mono);
   font-size: 0.85rem;
   color: var(--text-strong);
+}
+
+.version-panel .version-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.version-panel .version-actions button {
+  flex: 1 1 auto;
+  padding: 0.45rem 0.7rem;
+  font-size: 0.8rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-input);
+  color: var(--text);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.version-panel .version-actions button:hover {
+  background: var(--bg-card);
+  border-color: var(--accent-border);
+  color: var(--text-strong);
+}
+
+.version-panel .version-actions .copy-btn {
+  font-family: var(--mono);
 }
 </style>
