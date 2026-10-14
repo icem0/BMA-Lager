@@ -5,17 +5,27 @@
 // Fastify-Server auf 3000; das wird über localStorage überschrieben
 // oder in Settings eingestellt.
 //
-// Konfiguration via `localStorage.bma.api.url` (kann der Admin in
-// Einstellungen setzen).
+// Auflösung der Basis-URL (höchste Priorität zuerst):
+//   1. window.__BMA_API_URL__  — vom Container-Entrypoint aus ENV VITE_API_URL
+//                                gesetzt (siehe scripts/pwa-entrypoint.sh).
+//   2. localStorage['bma.api.url']  — vom User im Browser überschrieben.
+//   3. import.meta.env.VITE_API_URL  — Build-Default (nur bei statischem Build).
+//   4. 'http://localhost:4242'  — Dev-Fallback.
 //
 // Alle Requests senden Authorization: Bearer <jwt> (falls vorhanden) und
 // behandeln 401 → Auth-Store wird ausgeloggt.
 
 const LS_API_URL = 'bma.api.url'
+const DEFAULT_API_URL = 'http://localhost:4242'
 
 export function getApiBaseUrl(): string {
+  const fromWindow = (globalThis as { __BMA_API_URL__?: string }).__BMA_API_URL__
+  if (typeof fromWindow === 'string' && fromWindow.length > 0) return fromWindow
   const stored = localStorage.getItem(LS_API_URL)
-  return stored ?? 'http://localhost:4242'
+  if (stored) return stored
+  const fromBuild = import.meta.env.VITE_API_URL
+  if (typeof fromBuild === 'string' && fromBuild.length > 0) return fromBuild
+  return DEFAULT_API_URL
 }
 
 export function setApiBaseUrl(url: string): void {

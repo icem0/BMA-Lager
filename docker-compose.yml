@@ -88,6 +88,12 @@ services:
     image: ghcr.io/icem0/bma-lager-pwa:latest
     restart: unless-stopped
     depends_on: [api]
+    environment:
+      # Basis-URL des API-Backends. Wird beim Container-Start in
+      # /usr/share/nginx/html/config.js geschrieben (siehe
+      # scripts/pwa-entrypoint.sh) und beim Laden der PWA als
+      # window.__BMA_API_URL__ ausgelesen.
+      VITE_API_URL: ${VITE_API_URL:-http://localhost:${API_PORT:-4242}}
     ports:
       - "${PWA_PORT:-4280}:3000"
     networks: [internal]

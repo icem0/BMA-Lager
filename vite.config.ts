@@ -32,6 +32,10 @@ export default defineConfig({
       workbox: {
         // App-Shell precachen.
         globPatterns: ['**/*.{js,css,html,svg,png,ico,woff2}'],
+        // config.js wird zur Laufzeit vom Container-Entrypoint generiert
+        // (scripts/pwa-entrypoint.sh) und darf NICHT precached werden —
+        // sonst liefert der SW eine stale URL aus.
+        globIgnores: ['config.js'],
         // Bilder: CacheFirst mit Größenlimit (60 Einträge, 30 Tage).
         runtimeCaching: [
           {
