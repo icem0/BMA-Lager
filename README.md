@@ -182,10 +182,11 @@ cd /opt/bma-lager
 cp .env.example .env
 $EDITOR .env  # DB-Password, JWT-Secret, Admin-Daten, Domain-Configs
 
-# 3) GHCR-Login — meist nicht nötig, da die Images vom offiziellen
-#    ghcr.io/icem0/bma-lager-Mirror öffentlich sind.
-#    Nur wenn du ein eigenes Image-Repo nutzt (BMA_IMAGE_REPO=...):
-# echo "$GHCR_TOKEN" | docker login ghcr.io -u DEIN-USER --password-stdin
+# 3) GHCR-Login ist nicht nötig. Die Images unter
+#    ghcr.io/icem0/bma-lager-{api,pwa} sind public, und falls das Pullen
+#    trotzdem mal fehlschlägt, baut `docker compose` automatisch lokal
+#    aus den mitgelieferten Dockerfiles. Es ist also kein
+#    Registry-Login nötig, um den Stack zu starten.
 
 # 4) Initial: Migration + Bootstrap-Admin
 docker compose --profile migrate up
