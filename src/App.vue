@@ -251,7 +251,7 @@ function formatRelativ(iso: string | null): string {
     </div>
     <header class="app-header">
       <div class="brand">
-        <img src="/logo.png" alt="" class="brand-logo" width="32" height="32" />
+        <img src="/bma-lager-logo.png" alt="" class="brand-logo" width="32" height="32" />
         <strong>{{ t('app.title') }}</strong>
       </div>
       <nav>

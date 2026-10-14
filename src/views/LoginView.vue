@@ -52,7 +52,7 @@ function closeVersion(): void {
   <section class="login">
     <div class="card login-card">
       <div class="brand">
-        <img src="/logo.png" alt="" width="48" height="48" />
+        <img src="/bma-lager-logo.png" alt="" width="48" height="48" />
         <h1>BMA-Lager</h1>
       </div>
       <p class="hint">Bitte mit E-Mail und Passwort anmelden.</p>

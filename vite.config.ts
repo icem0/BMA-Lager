@@ -11,7 +11,7 @@ export default defineConfig({
       injectRegister: 'auto',
       // SW-Generierung nur für den Production-Build; im Dev stört der SW den Vite-HMR.
       devOptions: { enabled: false },
-      includeAssets: ['logo.png'],
+      includeAssets: ['bma-lager-logo.png'],
       manifest: {
         name: 'BMA-Lager',
         short_name: 'BMA-Lager',
@@ -24,9 +24,9 @@ export default defineConfig({
         background_color: '#ffffff',
         theme_color: '#0b3d91',
         icons: [
-          { src: 'logo.png', sizes: '192x192', type: 'image/png' },
-          { src: 'logo.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
-          { src: 'logo.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+          { src: 'bma-lager-logo.png', sizes: '192x192', type: 'image/png' },
+          { src: 'bma-lager-logo.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+          { src: 'bma-lager-logo.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
         ],
       },
       workbox: {
