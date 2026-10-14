@@ -63,33 +63,56 @@ onBeforeUnmount(() => stop())
   <section class="view barcode">
     <header class="view-head">
       <h1>Barcode-Scan</h1>
-      <p>Halte die Kamera auf den Barcode des Artikels.</p>
+      <p class="hint">Halte die Kamera auf den Barcode des Artikels.</p>
     </header>
 
-    <div class="scanner-area">
+    <div class="scanner-area" :class="{ 'is-ok': gefunden, 'is-err': scannerFehler }">
       <video v-show="aktiv" ref="videoEl" class="scanner-video" playsinline muted autoplay></video>
-      <div v-if="!aktiv && !scannerFehler" class="scanner-placeholder">
-        <p>Scanner startet …</p>
+
+      <!-- Reticle: zeigt dem User, wohin er den Barcode halten soll. -->
+      <div v-if="aktiv" class="scanner-reticle" aria-hidden="true">
+        <div class="scanner-reticle-corner tl"></div>
+        <div class="scanner-reticle-corner tr"></div>
+        <div class="scanner-reticle-corner bl"></div>
+        <div class="scanner-reticle-corner br"></div>
+        <span class="scanner-reticle-label">Barcode im Rahmen halten</span>
       </div>
-      <div v-if="scannerFehler" class="scanner-error">
-        <p><strong>Kamera nicht verfügbar:</strong> {{ scannerFehler }}</p>
+
+      <div v-if="!aktiv && !scannerFehler" class="scanner-overlay">
+        <div class="scanner-status">
+          <span class="scanner-spinner" aria-hidden="true"></span>
+          <p>Scanner startet …</p>
+        </div>
       </div>
-      <div v-if="gefunden" class="scanner-found">
-        <p>
-          Erkannt: <code>{{ gefunden }}</code>
-        </p>
+
+      <div v-if="scannerFehler" class="scanner-overlay scanner-error">
+        <div class="scanner-status">
+          <p><strong>Kamera nicht verfügbar</strong></p>
+          <p class="scanner-error-detail">{{ scannerFehler }}</p>
+          <p class="hint">Tipp: Browser-Berechtigung erteilen oder Code unten manuell eingeben.</p>
+        </div>
+      </div>
+
+      <div v-if="gefunden" class="scanner-overlay scanner-found">
+        <div class="scanner-status">
+          <p class="scanner-found-label">Erkannt</p>
+          <code class="scanner-found-code">{{ gefunden }}</code>
+        </div>
       </div>
     </div>
 
-    <div class="manual">
-      <h3>Oder Code manuell eingeben</h3>
-      <form @submit.prevent="manuellScannen">
-        <input v-model="manuelleEingabe" placeholder="EAN, Code-128, …" />
-        <button type="submit">Übernehmen</button>
-      </form>
-    </div>
+    <form class="manual-form" @submit.prevent="manuellScannen">
+      <input
+        v-model="manuelleEingabe"
+        type="text"
+        inputmode="text"
+        placeholder="Oder Code manuell eingeben …"
+        aria-label="Code manuell eingeben"
+      />
+      <button type="submit" class="primary">Übernehmen</button>
+    </form>
 
-    <p class="hint">
+    <p class="hint hint-bottom">
       Hinweis: Die Kamera-Berechtigung muss im Browser erteilt sein. Auf mobilen Geräten muss die
       App ggf. über "Zum Startbildschirm hinzufügen" installiert sein.
     </p>
@@ -107,13 +130,24 @@ onBeforeUnmount(() => stop())
   margin-bottom: 1rem;
 }
 
+.view-head .hint {
+  margin-top: 0.25rem;
+}
+
 .scanner-area {
   position: relative;
   aspect-ratio: 4/3;
-  background: var(--bg-input);
+  background: #000;
+  border: 1px solid var(--border);
   border-radius: var(--radius);
   overflow: hidden;
-  margin-bottom: 1.5rem;
+  margin-bottom: 1rem;
+}
+.scanner-area.is-ok {
+  border-color: var(--success);
+}
+.scanner-area.is-err {
+  border-color: var(--danger);
 }
 
 .scanner-video {
@@ -122,61 +156,140 @@ onBeforeUnmount(() => stop())
   object-fit: cover;
 }
 
-.scanner-placeholder,
-.scanner-error,
-.scanner-found {
+.scanner-reticle {
+  position: absolute;
+  inset: 12%;
+  pointer-events: none;
+}
+.scanner-reticle-corner {
+  position: absolute;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-color: var(--accent);
+  border-style: solid;
+}
+.scanner-reticle-corner.tl {
+  top: 0;
+  left: 0;
+  border-width: 3px 0 0 3px;
+  border-top-left-radius: 0.25rem;
+}
+.scanner-reticle-corner.tr {
+  top: 0;
+  right: 0;
+  border-width: 3px 3px 0 0;
+  border-top-right-radius: 0.25rem;
+}
+.scanner-reticle-corner.bl {
+  bottom: 0;
+  left: 0;
+  border-width: 0 0 3px 3px;
+  border-bottom-left-radius: 0.25rem;
+}
+.scanner-reticle-corner.br {
+  bottom: 0;
+  right: 0;
+  border-width: 0 3px 3px 0;
+  border-bottom-right-radius: 0.25rem;
+}
+.scanner-reticle-label {
+  position: absolute;
+  bottom: -1.6rem;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.scanner-overlay {
   position: absolute;
   inset: 0;
   display: grid;
   place-items: center;
   text-align: center;
   padding: 1rem;
+  background: rgba(0, 0, 0, 0.6);
+  color: white;
 }
-
-.scanner-error {
-  color: var(--danger);
-}
-
-.scanner-found {
-  color: var(--success);
-  background: rgba(0, 0, 0, 0.55);
-}
-
-.manual {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1rem;
-  margin-bottom: 1rem;
-}
-
-.manual form {
+.scanner-overlay .scanner-status {
   display: flex;
+  flex-direction: column;
+  align-items: center;
   gap: 0.5rem;
+  max-width: 80%;
+}
+.scanner-spinner {
+  width: 1.75rem;
+  height: 1.75rem;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+.scanner-error p {
+  margin: 0;
+}
+.scanner-error-detail {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  opacity: 0.8;
+}
+.scanner-error .hint {
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 0.8rem;
   margin-top: 0.5rem;
 }
-
-.manual input {
-  flex: 1;
-  padding: 0.5rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-input);
-  color: var(--text);
+.scanner-found {
+  background: rgba(74, 222, 128, 0.85);
+  color: #0a3b1c;
 }
-
-.manual button {
-  padding: 0.5rem 1rem;
-  background: var(--accent);
-  color: white;
-  border: none;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-}
-
-.hint {
-  color: var(--text-muted);
+.scanner-found-label {
   font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  margin: 0;
+}
+.scanner-found-code {
+  font-family: var(--mono);
+  font-size: 1.25rem;
+  font-weight: 600;
+  background: rgba(0, 0, 0, 0.18);
+  padding: 0.3rem 0.75rem;
+  border-radius: var(--radius-sm);
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.manual-form {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+.manual-form button {
+  min-height: 2.75rem;
+}
+
+@media (max-width: 540px) {
+  .manual-form {
+    grid-template-columns: 1fr;
+  }
+  .manual-form button {
+    order: 2;
+  }
+}
+
+.hint-bottom {
+  color: var(--text-muted);
+  font-size: 0.8rem;
   text-align: center;
+  margin-top: 0.75rem;
 }
 </style>
