@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useStandortStore } from '../stores/standort'
 import type { StandortTyp } from '../db/types'
@@ -25,6 +25,7 @@ const leeresFormular = (): Form => ({
 
 const formularOffen = ref(false)
 const formular = ref<Form>(leeresFormular())
+const archivierteAnzeigen = ref(false)
 
 function reset(): void {
   formular.value = leeresFormular()
@@ -52,7 +53,17 @@ async function archivieren(id: string): Promise<void> {
   await standortStore.archivieren(id)
 }
 
+async function wiederherstellen(id: string): Promise<void> {
+  await standortStore.wiederherstellen(id)
+}
+
 const typOptionen: StandortTyp[] = ['lager', 'auto', 'baustelle', 'extern']
+const sichtbareStandorte = computed(() =>
+  archivierteAnzeigen.value
+    ? [...standortStore.aktive, ...standortStore.archivierte]
+    : standortStore.aktive,
+)
+const istLeer = computed(() => sichtbareStandorte.value.length === 0 && !formularOffen.value)
 </script>
 
 <template>
@@ -104,11 +115,18 @@ const typOptionen: StandortTyp[] = ['lager', 'auto', 'baustelle', 'extern']
       </form>
     </div>
 
-    <p v-if="standortStore.aktive.length === 0 && !formularOffen" class="empty-state">
+    <p v-if="istLeer" class="empty-state">
       {{ t('view.standort.leer') }}
     </p>
 
-    <table v-else class="data">
+    <div v-else class="filter-bar">
+      <label class="check">
+        <input v-model="archivierteAnzeigen" type="checkbox" />
+        <span>{{ t('view.standort.filter.archivierteAnzeigen') }}</span>
+      </label>
+    </div>
+
+    <table v-if="!istLeer" class="data">
       <thead>
         <tr>
           <th>{{ t('view.standort.spalten.name') }}</th>
@@ -120,7 +138,7 @@ const typOptionen: StandortTyp[] = ['lager', 'auto', 'baustelle', 'extern']
         </tr>
       </thead>
       <tbody>
-        <tr v-for="s in standortStore.aktive" :key="s.id">
+        <tr v-for="s in sichtbareStandorte" :key="s.id" :class="{ archived: s.archiviert }">
           <td>{{ s.name }}</td>
           <td>
             <span class="badge">{{ t(`view.standort.typen.${s.typ}`) }}</span>
@@ -132,11 +150,14 @@ const typOptionen: StandortTyp[] = ['lager', 'auto', 'baustelle', 'extern']
             <span v-else class="muted">{{ t('view.common.nein') }}</span>
           </td>
           <td class="actions-cell">
-            <button v-if="!s.standard" type="button" @click="setStandard(s.id)">
+            <button v-if="!s.archiviert && !s.standard" type="button" @click="setStandard(s.id)">
               {{ t('view.standort.spalten.standard') }}
             </button>
-            <button type="button" class="danger" @click="archivieren(s.id)">
+            <button v-if="!s.archiviert" type="button" class="danger" @click="archivieren(s.id)">
               {{ t('view.artikel.detail.archivieren') }}
+            </button>
+            <button v-else type="button" @click="wiederherstellen(s.id)">
+              {{ t('view.standort.wiederherstellen') }}
             </button>
           </td>
         </tr>
@@ -155,5 +176,10 @@ const typOptionen: StandortTyp[] = ['lager', 'auto', 'baustelle', 'extern']
   .row {
     grid-template-columns: 1fr;
   }
+}
+
+.data tr.archived td {
+  color: var(--text-muted, #888);
+  text-decoration: line-through;
 }
 </style>
