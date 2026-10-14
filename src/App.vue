@@ -46,9 +46,11 @@ function closeVersion(): void {
 }
 
 function onDocumentClick(e: MouseEvent): void {
-  if (!versionOffen.value) return
+  if (!versionOffen.value && !syncPanelOffen.value) return
   const ziel = e.target as HTMLElement | null
-  if (ziel && !ziel.closest('.version-badge, .version-panel')) closeVersion()
+  if (!ziel) return
+  if (versionOffen.value && !ziel.closest('.version-badge, .version-panel')) closeVersion()
+  if (syncPanelOffen.value && !ziel.closest('.sync-indicator, .sync-panel')) closeSyncPanel()
 }
 
 const themeUmschalter = ref<'dark' | 'light' | 'auto'>(
@@ -127,6 +129,112 @@ function abmelden(): void {
 
 const versionLabel = `v${version} · ${commit}`
 const buildDateFormatiert = new Date(buildDate).toLocaleString()
+
+// ---------- DB-Sync Indikator ----------
+
+const syncPanelOffen = ref(false)
+const syncDetail = ref<'none' | 'fetching' | 'ready' | 'error'>('none')
+
+function toggleSyncPanel(): void {
+  syncPanelOffen.value = !syncPanelOffen.value
+  if (syncPanelOffen.value) void ladeSyncDetail()
+}
+
+function closeSyncPanel(): void {
+  syncPanelOffen.value = false
+}
+
+async function ladeSyncDetail(): Promise<void> {
+  syncDetail.value = 'fetching'
+  try {
+    await sync.refresh(getApiBaseUrl(), () => localStorage.getItem('bma.auth.jwt'))
+    syncDetail.value = 'ready'
+  } catch {
+    syncDetail.value = 'error'
+  }
+}
+
+async function manuellSync(): Promise<void> {
+  await sync.syncNow(getApiBaseUrl(), () => localStorage.getItem('bma.auth.jwt'))
+  await ladeSyncDetail()
+}
+
+function zaehleAbweichungen(
+  l: { artikel: number; standorte: number; projekte: number; buchungen: number } | null,
+  s: { artikel: number; standorte: number; projekte: number; buchungen: number } | null,
+): number {
+  if (!l || !s) return 0
+  let n = 0
+  if (l.artikel !== s.artikel) n++
+  if (l.standorte !== s.standorte) n++
+  if (l.projekte !== s.projekte) n++
+  if (l.buchungen !== s.buchungen) n++
+  return n
+}
+
+const syncZustand = computed<
+  'offline' | 'error' | 'syncing' | 'diverged' | 'pending' | 'stale' | 'synced'
+>(() => {
+  const st = sync.status
+  if (!online.value) return 'offline'
+  if (st.status === 'error') return 'error'
+  if (st.status === 'syncing') return 'syncing'
+  if (st.pending > 0) return 'pending'
+  const diff = zaehleAbweichungen(st.localCounts, st.serverCounts)
+  if (diff > 0) return 'diverged'
+  if (st.lastSyncAt) {
+    const alterMs = Date.now() - new Date(st.lastSyncAt).getTime()
+    if (alterMs > 5 * 60_000) return 'stale'
+  }
+  return 'synced'
+})
+
+const syncZustandLabel = computed((): string => {
+  switch (syncZustand.value) {
+    case 'offline':
+      return 'Offline'
+    case 'error':
+      return 'Sync-Fehler'
+    case 'syncing':
+      return 'Synchronisiere…'
+    case 'pending':
+      return `${sync.status.pending} ausstehend`
+    case 'diverged':
+      return 'DBs divergieren'
+    case 'stale':
+      return 'Sync veraltet'
+    case 'synced':
+      return 'DBs synchron'
+  }
+  return ''
+})
+
+const syncZustandTitel = computed(() => {
+  const basis = `DB-Sync: ${syncZustandLabel.value}`
+  if (sync.status.lastError) return `${basis} — ${sync.status.lastError}`
+  return basis
+})
+
+function formatIso(iso: string | null): string {
+  if (!iso) return '–'
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return '–'
+  return d.toLocaleString()
+}
+
+function formatRelativ(iso: string | null): string {
+  if (!iso) return 'nie'
+  const ms = Date.now() - new Date(iso).getTime()
+  if (ms < 0) return 'gerade eben'
+  const s = Math.floor(ms / 1000)
+  if (s < 60) return `${s}s her`
+  const m = Math.floor(s / 60)
+  if (m < 60) return `${m} min her`
+  const h = Math.floor(m / 60)
+  if (h < 24) return `${h} h her`
+  const t = Math.floor(h / 24)
+  return `${t} d her`
+}
 </script>
 
 <template>
@@ -179,25 +287,23 @@ const buildDateFormatiert = new Date(buildDate).toLocaleString()
         >
           {{ versionLabel }}
         </button>
-        <span
-          class="online-dot"
-          :class="{
-            online: online && sync.status.status !== 'error',
-            offline: !online || sync.status.status === 'offline' || sync.status.status === 'error',
-            syncing: sync.status.status === 'syncing',
-          }"
-          :title="
-            `Sync: ${sync.status.status}` +
-            (sync.status.lastError ? ` (${sync.status.lastError})` : '')
-          "
-        ></span>
-        <span
-          v-if="sync.status.pending > 0"
-          class="sync-badge"
-          :title="`${sync.status.pending} ausstehend`"
+        <button
+          type="button"
+          class="sync-indicator"
+          :class="`state-${syncZustand}`"
+          :title="syncZustandTitel"
+          @click.stop="toggleSyncPanel"
         >
-          {{ sync.status.pending }}
-        </span>
+          <span class="sync-dot" aria-hidden="true"></span>
+          <span class="sync-label">DB-Sync</span>
+          <span
+            v-if="sync.status.pending > 0"
+            class="sync-indicator-badge"
+            :title="`${sync.status.pending} ausstehend`"
+          >
+            {{ sync.status.pending }}
+          </span>
+        </button>
       </div>
     </header>
     <main>
@@ -229,6 +335,132 @@ const buildDateFormatiert = new Date(buildDate).toLocaleString()
         <code>git checkout {{ commit }}</code>
       </p>
       <button type="button" @click="closeVersion">Schließen</button>
+    </div>
+
+    <div v-if="syncPanelOffen" class="sync-panel" role="dialog" aria-label="DB-Sync-Status">
+      <header class="sync-panel-header">
+        <h2>
+          <span class="sync-dot" :class="`state-${syncZustand}`" aria-hidden="true"></span>
+          DB-Sync
+        </h2>
+        <span class="sync-panel-state" :class="`state-${syncZustand}`">{{ syncZustandLabel }}</span>
+      </header>
+
+      <dl class="meta">
+        <div>
+          <dt>Letzter Sync</dt>
+          <dd>
+            {{ formatIso(sync.status.lastSyncAt) }}
+            <span class="relativ">({{ formatRelativ(sync.status.lastSyncAt) }})</span>
+          </dd>
+        </div>
+        <div>
+          <dt>Server-Zeit</dt>
+          <dd>{{ formatIso(sync.status.serverTime) }}</dd>
+        </div>
+        <div>
+          <dt>Ausstehende Ops</dt>
+          <dd>
+            <span :class="sync.status.pending > 0 ? 'wert-warn' : 'wert-ok'">
+              {{ sync.status.pending }}
+            </span>
+          </dd>
+        </div>
+        <div v-if="sync.status.lastError">
+          <dt>Letzter Fehler</dt>
+          <dd class="wert-fehler">{{ sync.status.lastError }}</dd>
+        </div>
+      </dl>
+
+      <h3>Datensätze</h3>
+      <table class="sync-counts">
+        <thead>
+          <tr>
+            <th>Tabelle</th>
+            <th>Lokal</th>
+            <th>Server</th>
+            <th>Δ</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr
+            v-for="row in [
+              {
+                name: 'Artikel',
+                local: sync.status.localCounts?.artikel,
+                server: sync.status.serverCounts?.artikel,
+              },
+              {
+                name: 'Standorte',
+                local: sync.status.localCounts?.standorte,
+                server: sync.status.serverCounts?.standorte,
+              },
+              {
+                name: 'Projekte',
+                local: sync.status.localCounts?.projekte,
+                server: sync.status.serverCounts?.projekte,
+              },
+              {
+                name: 'Buchungen',
+                local: sync.status.localCounts?.buchungen,
+                server: sync.status.serverCounts?.buchungen,
+              },
+            ]"
+            :key="row.name"
+          >
+            <td>{{ row.name }}</td>
+            <td>{{ row.local ?? '–' }}</td>
+            <td>{{ row.server ?? '–' }}</td>
+            <td
+              :class="
+                row.local != null && row.server != null && row.local !== row.server
+                  ? 'wert-warn'
+                  : 'wert-ok'
+              "
+            >
+              {{
+                row.local != null && row.server != null
+                  ? (row.server - row.local > 0 ? '+' : '') + (row.server - row.local)
+                  : '–'
+              }}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p v-if="syncDetail === 'fetching'" class="hint">Aktualisiere Status…</p>
+      <p v-else-if="syncDetail === 'error'" class="hint wert-fehler">
+        Konnte Server-Status nicht abrufen.
+      </p>
+      <p
+        v-else-if="
+          sync.status.localCounts &&
+          sync.status.serverCounts &&
+          zaehleAbweichungen(sync.status.localCounts, sync.status.serverCounts) === 0 &&
+          sync.status.pending === 0
+        "
+        class="hint wert-ok"
+      >
+        Beide Datenbanken sind konsistent.
+      </p>
+      <p v-else-if="syncZustand === 'diverged'" class="hint wert-warn">
+        Counts weichen ab — ein Sync holt fehlende Datensätze bzw. pusht lokale Änderungen.
+      </p>
+      <p v-else-if="sync.status.pending > 0" class="hint wert-warn">
+        Lokale Änderungen warten auf den Push zum Server.
+      </p>
+
+      <div class="sync-panel-actions">
+        <button
+          type="button"
+          class="primary"
+          :disabled="sync.triggering || !online"
+          @click="manuellSync"
+        >
+          {{ sync.triggering ? 'Synchronisiere…' : 'Jetzt synchronisieren' }}
+        </button>
+        <button type="button" @click="closeSyncPanel">Schließen</button>
+      </div>
     </div>
   </div>
 </template>
@@ -378,27 +610,79 @@ const buildDateFormatiert = new Date(buildDate).toLocaleString()
   border-radius: var(--radius-sm);
 }
 
-.online-dot {
-  width: 0.65rem;
-  height: 0.65rem;
-  border-radius: 50%;
-  display: inline-block;
+.sync-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: var(--bg-input);
+  color: var(--text-muted);
+  border: 1px solid var(--border-strong);
+  padding: 0.3rem 0.55rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+}
+.sync-indicator:hover {
+  background: var(--bg-card);
+  color: var(--text-strong);
+  border-color: var(--accent-border);
 }
 
-.online-dot.online {
+.sync-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  display: inline-block;
+  background: var(--text-muted);
+}
+.sync-dot.state-synced {
   background: var(--success);
   box-shadow: 0 0 0 3px rgba(74, 222, 128, 0.15);
 }
-
-.online-dot.offline {
+.sync-dot.state-syncing {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+  animation: pulse 1.4s infinite;
+}
+.sync-dot.state-pending,
+.sync-dot.state-stale,
+.sync-dot.state-diverged {
+  background: #f59e0b;
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.18);
+}
+.sync-dot.state-offline,
+.sync-dot.state-error {
   background: var(--danger);
   box-shadow: 0 0 0 3px rgba(248, 113, 113, 0.15);
 }
 
-.online-dot.syncing {
-  background: var(--accent);
-  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
-  animation: pulse 1.4s infinite;
+.sync-indicator.state-synced {
+  border-color: rgba(74, 222, 128, 0.4);
+}
+.sync-indicator.state-syncing {
+  border-color: var(--accent-border);
+}
+.sync-indicator.state-pending,
+.sync-indicator.state-stale,
+.sync-indicator.state-diverged {
+  border-color: rgba(245, 158, 11, 0.4);
+}
+.sync-indicator.state-offline,
+.sync-indicator.state-error {
+  border-color: rgba(248, 113, 113, 0.4);
+}
+
+.sync-indicator-badge {
+  background: #f59e0b;
+  color: #1a1206;
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  min-width: 1.4rem;
+  text-align: center;
 }
 
 @keyframes pulse {
@@ -411,15 +695,161 @@ const buildDateFormatiert = new Date(buildDate).toLocaleString()
   }
 }
 
-.sync-badge {
-  background: var(--warning);
-  color: #1a1206;
-  font-size: 0.7rem;
-  font-weight: 700;
-  padding: 0.1rem 0.4rem;
+.sync-panel {
+  position: fixed;
+  top: 4rem;
+  right: 1rem;
+  width: 24rem;
+  max-height: calc(100vh - 5rem);
+  overflow-y: auto;
+  background: var(--bg-card);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 1rem 1.25rem;
+  box-shadow: var(--shadow-pop);
+  z-index: 1000;
+}
+.sync-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+.sync-panel-header h2 {
+  margin: 0;
+  font-size: 0.95rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.sync-panel-state {
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.15rem 0.55rem;
   border-radius: 999px;
-  min-width: 1.5rem;
-  text-align: center;
+  background: var(--bg-input);
+  color: var(--text-muted);
+}
+.sync-panel-state.state-synced {
+  background: rgba(74, 222, 128, 0.18);
+  color: var(--success);
+}
+.sync-panel-state.state-syncing {
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+.sync-panel-state.state-pending,
+.sync-panel-state.state-stale,
+.sync-panel-state.state-diverged {
+  background: rgba(245, 158, 11, 0.18);
+  color: #b45309;
+}
+.sync-panel-state.state-offline,
+.sync-panel-state.state-error {
+  background: rgba(248, 113, 113, 0.18);
+  color: var(--danger);
+}
+
+.sync-panel h3 {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin: 0.75rem 0 0.4rem;
+}
+
+.sync-panel .meta {
+  grid-template-columns: 1fr;
+  gap: 0.4rem 0;
+  margin-bottom: 0.5rem;
+}
+.sync-panel .meta dt {
+  font-size: 0.72rem;
+}
+.sync-panel .meta dd {
+  font-family: var(--mono);
+  font-size: 0.85rem;
+}
+.sync-panel .meta .relativ {
+  font-family: inherit;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  margin-left: 0.4rem;
+}
+
+.wert-ok {
+  color: var(--success);
+  font-weight: 600;
+}
+.wert-warn {
+  color: #b45309;
+  font-weight: 600;
+}
+.wert-fehler {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.sync-counts {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+  margin-bottom: 0.5rem;
+}
+.sync-counts th,
+.sync-counts td {
+  text-align: left;
+  padding: 0.3rem 0.4rem;
+  border-bottom: 1px solid var(--border);
+}
+.sync-counts th {
+  font-weight: 600;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+.sync-counts td {
+  font-family: var(--mono);
+}
+
+.sync-panel .hint {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin: 0.5rem 0;
+}
+
+.sync-panel-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+.sync-panel-actions button {
+  padding: 0.4rem 0.75rem;
+  font-size: 0.85rem;
+  background: var(--bg-input);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: inherit;
+}
+.sync-panel-actions button.primary {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+.sync-panel-actions button.primary:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+.sync-panel-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .version-badge {

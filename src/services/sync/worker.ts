@@ -41,11 +41,29 @@ export interface PushResult {
   }>
 }
 
+export interface TableCounts {
+  artikel: number
+  standorte: number
+  projekte: number
+  buchungen: number
+}
+
+export interface ServerStatus {
+  serverTime: string
+  counts: TableCounts
+}
+
 export interface SyncStatus {
   status: 'idle' | 'syncing' | 'offline' | 'error'
   pending: number
   lastSyncAt: string | null
   lastError: string | null
+  /** Counts pro Tabelle, zuletzt vom Server gemeldet. */
+  serverCounts: TableCounts | null
+  /** Counts pro Tabelle in der lokalen IndexedDB. */
+  localCounts: TableCounts | null
+  /** Server-Zeitpunkt der letzten Counts-Abfrage (ISO). */
+  serverTime: string | null
 }
 
 const LISTENERS = new Set<(s: SyncStatus) => void>()
@@ -54,6 +72,9 @@ let _status: SyncStatus = {
   pending: 0,
   lastSyncAt: null,
   lastError: null,
+  serverCounts: null,
+  localCounts: null,
+  serverTime: null,
 }
 let _intervalHandle: ReturnType<typeof setInterval> | null = null
 let _running = false
@@ -107,6 +128,31 @@ async function pushOps(apiBase: string, token: string | null, ops: unknown[]): P
     throw new Error(`Push HTTP ${res.status}: ${await res.text().catch(() => '')}`)
   }
   return (await res.json()) as PushResult
+}
+
+async function fetchServerStatus(apiBase: string, token: string | null): Promise<ServerStatus> {
+  const res = await fetch(`${apiBase}/api/sync/status`, {
+    headers: {
+      Accept: 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    credentials: 'include',
+  })
+  if (!res.ok) {
+    throw new Error(`Status HTTP ${res.status}: ${await res.text().catch(() => '')}`)
+  }
+  return (await res.json()) as ServerStatus
+}
+
+async function getLocalCounts(): Promise<TableCounts> {
+  const db = getDb()
+  const [artikel, standorte, projekte, buchungen] = await Promise.all([
+    db.artikel.count(),
+    db.standorte.count(),
+    db.projekte.count(),
+    db.buchungen.count(),
+  ])
+  return { artikel, standorte, projekte, buchungen }
 }
 
 // ---------- Outbox-Helfer ----------
@@ -219,22 +265,97 @@ export async function runSync(opts: { token: string | null; apiBase: string }): 
     const snap = await fetchSnapshot(apiBase, token, lastPull ?? '1970-01-01T00:00:00.000Z')
     await applySnapshot(snap)
 
+    // 3) Server-Status für Divergenz-Anzeige holen
+    let serverCounts: TableCounts | null = _status.serverCounts
+    let serverTime: string | null = _status.serverTime
+    try {
+      const st = await fetchServerStatus(apiBase, token)
+      serverCounts = st.counts
+      serverTime = st.serverTime
+    } catch {
+      // Counts sind nur Anzeige – Fehler hier sind nicht kritisch.
+    }
+
+    const localCounts = await getLocalCounts()
+
     updateStatus({
       status: 'idle',
       lastSyncAt: jetztIso(),
       lastError: null,
       pending: await pendingCount(),
+      serverCounts,
+      serverTime,
+      localCounts,
     })
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
+    let localCounts: TableCounts | null = _status.localCounts
+    try {
+      localCounts = await getLocalCounts()
+    } catch {
+      // Counts sind nur Anzeige – Fehler hier sind nicht kritisch.
+    }
     if (/Failed to fetch|NetworkError|fetch/i.test(msg)) {
-      updateStatus({ status: 'offline', lastError: msg, pending: await pendingCount() })
+      updateStatus({
+        status: 'offline',
+        lastError: msg,
+        pending: await pendingCount(),
+        localCounts,
+      })
     } else {
-      updateStatus({ status: 'error', lastError: msg, pending: await pendingCount() })
+      updateStatus({
+        status: 'error',
+        lastError: msg,
+        pending: await pendingCount(),
+        localCounts,
+      })
     }
   } finally {
     _running = false
   }
+}
+
+// ---------- Manueller Sync + Status-Refresh ----------
+
+/**
+ * Triggert einen Sync-Lauf sofort (Push + Pull + Server-Status).
+ * Kein Effekt, wenn gerade schon ein Sync läuft.
+ */
+export async function triggerSyncNow(opts: {
+  token: string | null
+  apiBase: string
+}): Promise<void> {
+  await runSync(opts)
+}
+
+/**
+ * Holt frische Server-Counts, ohne einen vollen Sync zu fahren.
+ * Aktualisiert auch die lokalen Counts.
+ */
+export async function refreshStatus(opts: {
+  token: string | null
+  apiBase: string
+}): Promise<void> {
+  let localCounts: TableCounts | null = _status.localCounts
+  let serverCounts: TableCounts | null = _status.serverCounts
+  let serverTime: string | null = _status.serverTime
+  let lastError: string | null = null
+
+  try {
+    localCounts = await getLocalCounts()
+  } catch {
+    // s. o.
+  }
+
+  try {
+    const st = await fetchServerStatus(opts.apiBase, opts.token)
+    serverCounts = st.counts
+    serverTime = st.serverTime
+  } catch (e) {
+    lastError = e instanceof Error ? e.message : String(e)
+  }
+
+  updateStatus({ localCounts, serverCounts, serverTime, lastError })
 }
 
 // ---------- Worker-Lifecycle ----------

@@ -7,6 +7,7 @@ import 'fake-indexeddb/auto'
 import { BmaLagerDb, getDb, setDb } from '../../../db/database'
 import type { Artikel, Buchung, OutboxEintrag, Standort } from '../../../db/types'
 import { jetztIso, neueUuid } from '../../../domain/ids'
+import { getSyncStatus, type TableCounts } from '../worker'
 
 function artikelAnlage(id: string, titel: string): Artikel {
   const now = jetztIso()
@@ -216,6 +217,45 @@ describe('Sync — Snapshot-Merge-Strategie (Last-Writer-Wins)', () => {
     await getDb().standorte.add(s)
     const lokal = await getDb().standorte.get(s.id)
     expect(lokal?.name).toBe('Hauptlager')
+  })
+})
+
+describe('Sync — Status & Counts', () => {
+  beforeEach(() => {
+    setDb(new BmaLagerDb(`bma-lager-test-${Math.random().toString(36).slice(2)}`))
+  })
+
+  it('SyncStatus hat Felder für Server- und Lokal-Counts', () => {
+    const st = getSyncStatus()
+    expect(st).toHaveProperty('serverCounts')
+    expect(st).toHaveProperty('localCounts')
+    expect(st).toHaveProperty('serverTime')
+    expect(st.serverCounts).toBeNull()
+    expect(st.localCounts).toBeNull()
+    expect(st.serverTime).toBeNull()
+  })
+
+  it('TableCounts-Form: artikel/standorte/projekte/buchungen', () => {
+    const counts: TableCounts = { artikel: 1, standorte: 2, projekte: 3, buchungen: 4 }
+    expect(counts.artikel).toBe(1)
+    expect(counts.standorte).toBe(2)
+    expect(counts.projekte).toBe(3)
+    expect(counts.buchungen).toBe(4)
+  })
+
+  it('Lokale Counts werden korrekt gezählt', async () => {
+    await getDb().artikel.add(artikelAnlage(neueUuid(), 'A'))
+    await getDb().artikel.add(artikelAnlage(neueUuid(), 'B'))
+    await getDb().standorte.add(standortAnlage(neueUuid(), 'L1'))
+    await getDb().buchungen.add(buchungsAnlage(neueUuid(), 'a1', 's1', 5))
+
+    const lokal = {
+      artikel: await getDb().artikel.count(),
+      standorte: await getDb().standorte.count(),
+      projekte: await getDb().projekte.count(),
+      buchungen: await getDb().buchungen.count(),
+    }
+    expect(lokal).toEqual({ artikel: 2, standorte: 1, projekte: 0, buchungen: 1 })
   })
 })
 

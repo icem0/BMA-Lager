@@ -6,13 +6,16 @@ import { ref } from 'vue'
 import {
   getSyncStatus,
   onSyncStatus,
+  refreshStatus,
   startSyncWorker,
   stopSyncWorker,
+  triggerSyncNow,
   type SyncStatus,
 } from '../services/sync/worker'
 
 export const useSyncStore = defineStore('sync', () => {
   const status = ref<SyncStatus>(getSyncStatus())
+  const triggering = ref(false)
 
   function bind(): void {
     onSyncStatus((next) => {
@@ -33,5 +36,19 @@ export const useSyncStore = defineStore('sync', () => {
     stopSyncWorker()
   }
 
-  return { status, start, stop, bind }
+  async function syncNow(apiBase: string, getToken: () => string | null): Promise<void> {
+    if (triggering.value) return
+    triggering.value = true
+    try {
+      await triggerSyncNow({ apiBase, token: getToken() })
+    } finally {
+      triggering.value = false
+    }
+  }
+
+  async function refresh(apiBase: string, getToken: () => string | null): Promise<void> {
+    await refreshStatus({ apiBase, token: getToken() })
+  }
+
+  return { status, triggering, start, stop, bind, syncNow, refresh }
 })

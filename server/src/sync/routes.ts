@@ -1,4 +1,4 @@
-// Sync-Routes: GET /api/sync/snapshot, POST /api/sync/push.
+// Sync-Routes: GET /api/sync/snapshot, GET /api/sync/status, POST /api/sync/push.
 
 import type { FastifyInstance } from 'fastify'
 import { sql } from 'drizzle-orm'
@@ -6,6 +6,26 @@ import { getDb } from '../db/client.js'
 import { artikel, buchungen, projekte, standorte } from '../db/schema.js'
 import { pushPayloadSchema, snapshotQuerySchema } from '../domain/validierung.js'
 import { resolvePush } from './resolver.js'
+
+async function countRows(db: ReturnType<typeof getDb>): Promise<{
+  artikel: number
+  standorte: number
+  projekte: number
+  buchungen: number
+}> {
+  const [a, s, p, b] = await Promise.all([
+    db.select({ c: sql<number>`count(*)::int` }).from(artikel),
+    db.select({ c: sql<number>`count(*)::int` }).from(standorte),
+    db.select({ c: sql<number>`count(*)::int` }).from(projekte),
+    db.select({ c: sql<number>`count(*)::int` }).from(buchungen),
+  ])
+  return {
+    artikel: a[0]?.c ?? 0,
+    standorte: s[0]?.c ?? 0,
+    projekte: p[0]?.c ?? 0,
+    buchungen: b[0]?.c ?? 0,
+  }
+}
 
 export async function syncRoutes(app: FastifyInstance): Promise<void> {
   // ---------- GET /api/sync/snapshot?since=<iso> ----------
@@ -34,6 +54,22 @@ export async function syncRoutes(app: FastifyInstance): Promise<void> {
         standorte: standortRows,
         projekte: projektRows,
         buchungen: buchungRows,
+      })
+    },
+  )
+
+  // ---------- GET /api/sync/status ----------
+  // Liefert Server-Zeit + Row-Counts pro Tabelle. Wird vom Client genutzt,
+  // um die Divergenz zwischen lokaler IndexedDB und Postgres anzuzeigen.
+  app.get(
+    '/api/sync/status',
+    { preHandler: app.requireAuth },
+    async (_req, reply) => {
+      const db = getDb()
+      const counts = await countRows(db)
+      return reply.send({
+        serverTime: new Date().toISOString(),
+        counts,
       })
     },
   )
