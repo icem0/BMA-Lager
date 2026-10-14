@@ -7,7 +7,11 @@
 //   3. Conflict-Resolution: Server hat Vorrang (Last-Writer-Wins auf
 //      geaendertAm), Client sieht Server-Version in der nächsten Pull
 //
-// Backoff bei Fehler: 1s, 2s, 4s, 8s, 16s, 32s, 60s (cap).
+// Backoff bei Server-Fehlern (5xx, Network, Origin-unavailable):
+//   - Cloudflare / Fastify können `Retry-After` setzen — wir respektieren
+//     ihn (cap 5 Min) und pausieren den Worker entsprechend.
+//   - Sonst: 1s, 2s, 4s, 8s, 16s, 32s, 60s (Cap), gesteuert über
+//     `computeBackoffMs(attempts)`.
 // Wir laufen in einem setInterval + bei `online`-Event + bei `visibilitychange`.
 
 import { getDb } from '../../db/database'
@@ -18,6 +22,89 @@ import { setApiBaseUrl } from '../../auth/api'
 // ---------- Konfiguration ----------
 
 const BATCH_SIZE = 200
+/** Maximales Backoff-Intervall, wenn der Server nichts Konkreteres sagt. */
+const BACKOFF_CAP_MS = 60_000
+/** Hard cap für ein vom Server vorgegebenes Retry-After (Cloudflare 502: 60s). */
+const RETRY_AFTER_CAP_MS = 5 * 60_000
+
+// ---------- Backoff (rein, ohne Side-Effects → testbar) ----------
+
+/**
+ * Exponentielles Backoff: 1s, 2s, 4s, … mit Cap.
+ * `attempts` ist die Anzahl der bisherigen Fehlversuche in Folge (≥ 0).
+ */
+export function computeBackoffMs(attempts: number, capMs: number = BACKOFF_CAP_MS): number {
+  if (attempts <= 0) return 0
+  const exp = Math.min(attempts - 1, 16)
+  const ms = 1_000 * 2 ** exp
+  return Math.min(ms, capMs)
+}
+
+/**
+ * Parst `Retry-After`-Header (Sekunden ODER HTTP-Datum) und cappt auf
+ * `capMs`. Liefert `null`, wenn nichts Verwertbares drinsteht.
+ */
+export function parseRetryAfter(
+  header: string | null | undefined,
+  capMs: number = RETRY_AFTER_CAP_MS,
+  now: number = Date.now(),
+): number | null {
+  if (!header) return null
+  const trimmed = header.trim()
+  if (!trimmed) return null
+  // Sekunden (relativ)
+  if (/^\d+(\.\d+)?$/.test(trimmed)) {
+    const sec = Number(trimmed)
+    if (!Number.isFinite(sec) || sec < 0) return null
+    return Math.min(sec * 1_000, capMs)
+  }
+  // HTTP-Datum
+  const t = Date.parse(trimmed)
+  if (!Number.isNaN(t)) {
+    return Math.min(Math.max(0, t - now), capMs)
+  }
+  return null
+}
+
+// ---------- HTTP-Fehler ----------
+
+/** Vom Server stammender Fehler mit optionalem Retry-After. */
+export class SyncHttpError extends Error {
+  readonly status: number
+  readonly retryAfterMs: number | null
+  /** Kurzer Anzeige-Code für die UI (z. B. "origin-unavailable"). */
+  readonly category: 'origin-unavailable' | 'auth' | 'validation' | 'http'
+
+  constructor(
+    status: number,
+    message: string,
+    opts: { retryAfterMs?: number | null; category?: SyncHttpError['category'] } = {},
+  ) {
+    super(message)
+    this.name = 'SyncHttpError'
+    this.status = status
+    this.retryAfterMs = opts.retryAfterMs ?? null
+    this.category = opts.category ?? (status >= 500 ? 'origin-unavailable' : 'http')
+  }
+}
+
+function categorizeStatus(status: number): SyncHttpError['category'] {
+  if (status === 401 || status === 403) return 'auth'
+  if (status >= 400 && status < 500) return 'validation'
+  if (status >= 500) return 'origin-unavailable'
+  return 'http'
+}
+
+async function readErrorBody(res: Response): Promise<string> {
+  try {
+    const text = await res.text()
+    // Cloudflare-5xx-Fehlermeldungen sind JSON, aber für die UI reicht
+    // ein kurzer Header plus der Status.
+    return text.length > 240 ? `${text.slice(0, 240)}…` : text
+  } catch {
+    return ''
+  }
+}
 
 // ---------- Typen ----------
 
@@ -54,7 +141,7 @@ export interface ServerStatus {
 }
 
 export interface SyncStatus {
-  status: 'idle' | 'syncing' | 'offline' | 'error'
+  status: 'idle' | 'syncing' | 'offline' | 'error' | 'origin-unavailable'
   pending: number
   lastSyncAt: string | null
   lastError: string | null
@@ -64,6 +151,8 @@ export interface SyncStatus {
   localCounts: TableCounts | null
   /** Server-Zeitpunkt der letzten Counts-Abfrage (ISO). */
   serverTime: string | null
+  /** Wann der nächste Sync-Versuch starten soll (ISO). `null` = sofort erlaubt. */
+  nextRetryAt: string | null
 }
 
 const LISTENERS = new Set<(s: SyncStatus) => void>()
@@ -75,9 +164,12 @@ let _status: SyncStatus = {
   serverCounts: null,
   localCounts: null,
   serverTime: null,
+  nextRetryAt: null,
 }
 let _intervalHandle: ReturnType<typeof setInterval> | null = null
 let _running = false
+/** Anzahl der aufeinanderfolgenden Fehlversuche (für Backoff). */
+let _consecutiveFailures = 0
 
 export function getSyncStatus(): SyncStatus {
   return _status
@@ -109,7 +201,12 @@ async function fetchSnapshot(
     credentials: 'include',
   })
   if (!res.ok) {
-    throw new Error(`Snapshot HTTP ${res.status}: ${await res.text().catch(() => '')}`)
+    const body = await readErrorBody(res)
+    const retryAfterMs = parseRetryAfter(res.headers.get('Retry-After'))
+    throw new SyncHttpError(res.status, `Snapshot HTTP ${res.status}: ${body}`, {
+      retryAfterMs,
+      category: categorizeStatus(res.status),
+    })
   }
   return (await res.json()) as SyncSnapshot
 }
@@ -125,7 +222,12 @@ async function pushOps(apiBase: string, token: string | null, ops: unknown[]): P
     body: JSON.stringify({ ops }),
   })
   if (!res.ok) {
-    throw new Error(`Push HTTP ${res.status}: ${await res.text().catch(() => '')}`)
+    const body = await readErrorBody(res)
+    const retryAfterMs = parseRetryAfter(res.headers.get('Retry-After'))
+    throw new SyncHttpError(res.status, `Push HTTP ${res.status}: ${body}`, {
+      retryAfterMs,
+      category: categorizeStatus(res.status),
+    })
   }
   return (await res.json()) as PushResult
 }
@@ -139,7 +241,12 @@ async function fetchServerStatus(apiBase: string, token: string | null): Promise
     credentials: 'include',
   })
   if (!res.ok) {
-    throw new Error(`Status HTTP ${res.status}: ${await res.text().catch(() => '')}`)
+    const body = await readErrorBody(res)
+    const retryAfterMs = parseRetryAfter(res.headers.get('Retry-After'))
+    throw new SyncHttpError(res.status, `Status HTTP ${res.status}: ${body}`, {
+      retryAfterMs,
+      category: categorizeStatus(res.status),
+    })
   }
   return (await res.json()) as ServerStatus
 }
@@ -318,7 +425,9 @@ export async function runSync(opts: { token: string | null; apiBase: string }): 
       serverCounts,
       serverTime,
       localCounts,
+      nextRetryAt: null,
     })
+    _consecutiveFailures = 0
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     let localCounts: TableCounts | null = _status.localCounts
@@ -327,12 +436,41 @@ export async function runSync(opts: { token: string | null; apiBase: string }): 
     } catch {
       // Counts sind nur Anzeige – Fehler hier sind nicht kritisch.
     }
-    if (/Failed to fetch|NetworkError|fetch/i.test(msg)) {
+
+    const isNetwork = /Failed to fetch|NetworkError|fetch|load failed/i.test(msg)
+    const http = e instanceof SyncHttpError ? e : null
+
+    _consecutiveFailures++
+    const backoffMs = computeBackoffMs(_consecutiveFailures)
+    // Retry-After hat Vorrang, wenn der Server ihn gesetzt hat.
+    const waitMs = http?.retryAfterMs ?? backoffMs
+    const nextRetryAt = waitMs > 0 ? new Date(Date.now() + waitMs).toISOString() : null
+
+    if (isNetwork) {
       updateStatus({
         status: 'offline',
         lastError: msg,
         pending: await pendingCount(),
         localCounts,
+        nextRetryAt,
+      })
+    } else if (http?.category === 'origin-unavailable') {
+      // 5xx: Server/Origin ist down — kein Punkt, alle 30s zu hämmern.
+      updateStatus({
+        status: 'origin-unavailable',
+        lastError: msg,
+        pending: await pendingCount(),
+        localCounts,
+        nextRetryAt,
+      })
+    } else if (http?.category === 'auth') {
+      // Token abgelaufen o. ä. — User muss sich neu einloggen.
+      updateStatus({
+        status: 'error',
+        lastError: msg,
+        pending: await pendingCount(),
+        localCounts,
+        nextRetryAt,
       })
     } else {
       updateStatus({
@@ -340,6 +478,7 @@ export async function runSync(opts: { token: string | null; apiBase: string }): 
         lastError: msg,
         pending: await pendingCount(),
         localCounts,
+        nextRetryAt,
       })
     }
   } finally {
@@ -352,11 +491,14 @@ export async function runSync(opts: { token: string | null; apiBase: string }): 
 /**
  * Triggert einen Sync-Lauf sofort (Push + Pull + Server-Status).
  * Kein Effekt, wenn gerade schon ein Sync läuft.
+ * Backoff wird ignoriert — der User hat explizit geklickt.
  */
 export async function triggerSyncNow(opts: {
   token: string | null
   apiBase: string
 }): Promise<void> {
+  _consecutiveFailures = 0
+  updateStatus({ nextRetryAt: null })
   await runSync(opts)
 }
 
@@ -406,11 +548,26 @@ export function startSyncWorker(opts: WorkerOptions): void {
   const intervalMs = (opts.intervalSek ?? 30) * 1000
 
   const tick = () => {
+    if (_running) return
+    // Respektiere Backoff: wenn der letzte Lauf ein `nextRetryAt` gesetzt
+    // hat, das in der Zukunft liegt, überspringen wir den Tick.
+    if (_status.nextRetryAt) {
+      const next = Date.parse(_status.nextRetryAt)
+      if (Number.isFinite(next) && next > Date.now()) return
+    }
     void runSync({ token: opts.getToken(), apiBase: opts.apiBase })
   }
   _intervalHandle = setInterval(tick, intervalMs)
 
-  window.addEventListener('online', tick)
+  // Online-Event: Retry sofort versuchen, wenn der Origin wieder da ist.
+  window.addEventListener('online', () => {
+    if (_status.status === 'offline' || _status.status === 'origin-unavailable') {
+      // Backoff zurücksetzen, damit wir nicht erst auf den nächsten Tick warten.
+      _consecutiveFailures = 0
+      updateStatus({ nextRetryAt: null })
+    }
+    tick()
+  })
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') tick()
   })
@@ -443,6 +600,30 @@ export async function queueOp(
     attempts: 0,
     lastError: null,
   })
+}
+
+// ---------- Test-Helfer ----------
+
+/**
+ * Setzt den internen Sync-State (Counter, Status, lastError) zurück.
+ * Nur in Tests verwenden.
+ */
+export function _resetSyncForTests(): void {
+  _status = {
+    status: 'idle',
+    pending: 0,
+    lastSyncAt: null,
+    lastError: null,
+    serverCounts: null,
+    localCounts: null,
+    serverTime: null,
+    nextRetryAt: null,
+  }
+  _consecutiveFailures = 0
+  if (_intervalHandle) {
+    clearInterval(_intervalHandle)
+    _intervalHandle = null
+  }
 }
 
 // Hilfsimporte (noUnusedLocals)

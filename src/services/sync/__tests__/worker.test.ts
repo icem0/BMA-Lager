@@ -360,6 +360,83 @@ describe('Sync — Push-Markierung (Outbox- vs. Payload-IDs)', () => {
   })
 })
 
+describe('Sync — Backoff & Retry-After', () => {
+  it('computeBackoffMs: 0 beim ersten Versuch, dann 1s, 2s, 4s, … mit Cap', async () => {
+    const { computeBackoffMs } = await import('../worker')
+    expect(computeBackoffMs(0)).toBe(0)
+    expect(computeBackoffMs(1)).toBe(1_000)
+    expect(computeBackoffMs(2)).toBe(2_000)
+    expect(computeBackoffMs(3)).toBe(4_000)
+    expect(computeBackoffMs(4)).toBe(8_000)
+    expect(computeBackoffMs(10)).toBe(60_000) // cap
+  })
+
+  it('parseRetryAfter: Sekunden und HTTP-Datum werden erkannt, Cap greift', async () => {
+    const { parseRetryAfter } = await import('../worker')
+    const now = Date.parse('2026-01-01T12:00:00.000Z')
+    expect(parseRetryAfter('60', 5 * 60_000, now)).toBe(60_000)
+    expect(parseRetryAfter('0', 5 * 60_000, now)).toBe(0)
+    // 600s > 5min cap → 300_000
+    expect(parseRetryAfter('600', 5 * 60_000, now)).toBe(300_000)
+    // HTTP-Datum 30s in der Zukunft
+    const future = new Date(now + 30_000).toUTCString()
+    const got = parseRetryAfter(future, 5 * 60_000, now)
+    expect(got).not.toBeNull()
+    expect(got!).toBeGreaterThanOrEqual(29_000)
+    expect(got!).toBeLessThanOrEqual(30_000)
+    // Müll
+    expect(parseRetryAfter('banana', 5 * 60_000, now)).toBeNull()
+    expect(parseRetryAfter(null, 5 * 60_000, now)).toBeNull()
+    expect(parseRetryAfter('', 5 * 60_000, now)).toBeNull()
+  })
+
+  it('5xx setzt status "origin-unavailable" und plant nextRetryAt anhand Retry-After', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url.endsWith('/api/sync/push')) {
+        return new Response('Bad Gateway', {
+          status: 502,
+          headers: { 'Retry-After': '60' },
+        })
+      }
+      return new Response('not found', { status: 404 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { runSync, getSyncStatus } = await import('../worker')
+    await runSync({ token: null, apiBase: 'http://test.local' })
+
+    const st = getSyncStatus()
+    expect(st.status).toBe('origin-unavailable')
+    expect(st.lastError).toContain('502')
+    expect(st.nextRetryAt).not.toBeNull()
+    const nextMs = Date.parse(st.nextRetryAt!) - Date.now()
+    // Cloudflare-Antwort sagt 60s — Worker cappt nicht (60_000 < 300_000).
+    expect(nextMs).toBeGreaterThan(50_000)
+    expect(nextMs).toBeLessThan(70_000)
+  })
+
+  it('Netzwerk-Fehler erhöht Backoff über mehrere Versuche (exponentiell)', async () => {
+    const fetchMock = vi.fn(async () => {
+      throw new TypeError('Failed to fetch')
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { runSync, getSyncStatus, _resetSyncForTests } = await import('../worker')
+    _resetSyncForTests()
+
+    await runSync({ token: null, apiBase: 'http://test.local' })
+    let nextMs = Date.parse(getSyncStatus().nextRetryAt!) - Date.now()
+    expect(nextMs).toBeGreaterThan(500)
+    expect(nextMs).toBeLessThan(1_500)
+
+    await runSync({ token: null, apiBase: 'http://test.local' })
+    nextMs = Date.parse(getSyncStatus().nextRetryAt!) - Date.now()
+    expect(nextMs).toBeGreaterThan(1_500)
+    expect(nextMs).toBeLessThan(2_500)
+  })
+})
+
 afterEach(() => {
   vi.unstubAllGlobals()
 })

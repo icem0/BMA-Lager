@@ -254,10 +254,18 @@ function zaehleAbweichungen(
 }
 
 const syncZustand = computed<
-  'offline' | 'error' | 'syncing' | 'diverged' | 'pending' | 'stale' | 'synced'
+  | 'offline'
+  | 'error'
+  | 'syncing'
+  | 'diverged'
+  | 'pending'
+  | 'stale'
+  | 'synced'
+  | 'origin-unavailable'
 >(() => {
   const st = sync.status
   if (!online.value) return 'offline'
+  if (st.status === 'origin-unavailable') return 'origin-unavailable'
   if (st.status === 'error') return 'error'
   if (st.status === 'syncing') return 'syncing'
   if (st.pending > 0) return 'pending'
@@ -274,6 +282,8 @@ const syncZustandLabel = computed((): string => {
   switch (syncZustand.value) {
     case 'offline':
       return 'Offline'
+    case 'origin-unavailable':
+      return 'Server nicht erreichbar'
     case 'error':
       return 'Sync-Fehler'
     case 'syncing':
@@ -402,9 +412,17 @@ function formatRelativ(iso: string | null): string {
       </RouterLink>
       <RouterLink to="/scan" class="bn-fab" aria-label="Barcode-Scanner öffnen">
         <span class="bn-fab-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-               stroke-linecap="round" stroke-linejoin="round">
-            <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path
+              d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"
+            ></path>
             <circle cx="12" cy="13" r="4"></circle>
           </svg>
         </span>
@@ -442,19 +460,13 @@ function formatRelativ(iso: string | null): string {
       </p>
       <p class="version-footer">
         by
-        <a
-          :href="repoUrl"
-          target="_blank"
-          rel="noopener noreferrer"
-          class="version-footer-link"
-        >icem0</a>
+        <a :href="repoUrl" target="_blank" rel="noopener noreferrer" class="version-footer-link"
+          >icem0</a
+        >
         ·
-        <a
-          :href="repoUrl"
-          target="_blank"
-          rel="noopener noreferrer"
-          class="version-footer-link"
-        >github.com/icem0/bma-lager</a>
+        <a :href="repoUrl" target="_blank" rel="noopener noreferrer" class="version-footer-link"
+          >github.com/icem0/bma-lager</a
+        >
         · MIT-Lizenz
       </p>
       <div class="version-actions">
@@ -463,7 +475,9 @@ function formatRelativ(iso: string | null): string {
           class="copy-btn"
           :class="`state-${copyStatus}`"
           :title="copyStatus === 'ok' ? 'Kopiert' : versionString"
-          :aria-label="copyStatus === 'ok' ? 'Kopiert' : 'Build-Info in die Zwischenablage kopieren'"
+          :aria-label="
+            copyStatus === 'ok' ? 'Kopiert' : 'Build-Info in die Zwischenablage kopieren'
+          "
           @click="copyVersion"
         >
           <svg
@@ -608,6 +622,12 @@ function formatRelativ(iso: string | null): string {
       <p v-else-if="syncDetail === 'error'" class="hint wert-fehler">
         Konnte Server-Status nicht abrufen.
       </p>
+      <p v-else-if="syncZustand === 'origin-unavailable'" class="hint wert-fehler">
+        Server liefert 5xx (z. B. Cloudflare 502) — Origin ist nicht erreichbar.
+        <span v-if="sync.status.nextRetryAt">
+          Nächster automatischer Versuch um {{ formatIso(sync.status.nextRetryAt) }}.
+        </span>
+      </p>
       <p
         v-else-if="
           sync.status.localCounts &&
@@ -650,14 +670,10 @@ function formatRelativ(iso: string | null): string {
           <strong>Service-Worker-Cache wirklich leeren?</strong>
         </p>
         <p class="sync-cache-confirm-detail">
-          Die App lädt danach alle Dateien neu vom Server. Deine Buchungen und der Login
-          bleiben erhalten (liegen in der Browser-Datenbank bzw. localStorage). Die Seite
-          wird neu geladen.
+          Die App lädt danach alle Dateien neu vom Server. Deine Buchungen und der Login bleiben
+          erhalten (liegen in der Browser-Datenbank bzw. localStorage). Die Seite wird neu geladen.
         </p>
-        <p
-          v-if="cacheResetPhase === 'fehler' && cacheResetFehler"
-          class="wert-fehler"
-        >
+        <p v-if="cacheResetPhase === 'fehler' && cacheResetFehler" class="wert-fehler">
           {{ cacheResetFehler }}
         </p>
         <div class="sync-panel-actions">
@@ -870,7 +886,8 @@ function formatRelativ(iso: string | null): string {
   box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.18);
 }
 .sync-dot.state-offline,
-.sync-dot.state-error {
+.sync-dot.state-error,
+.sync-dot.state-origin-unavailable {
   background: var(--danger);
   box-shadow: 0 0 0 3px rgba(248, 113, 113, 0.15);
 }
@@ -887,7 +904,8 @@ function formatRelativ(iso: string | null): string {
   border-color: rgba(245, 158, 11, 0.4);
 }
 .sync-indicator.state-offline,
-.sync-indicator.state-error {
+.sync-indicator.state-error,
+.sync-indicator.state-origin-unavailable {
   border-color: rgba(248, 113, 113, 0.4);
 }
 
@@ -967,7 +985,8 @@ function formatRelativ(iso: string | null): string {
   color: #b45309;
 }
 .sync-panel-state.state-offline,
-.sync-panel-state.state-error {
+.sync-panel-state.state-error,
+.sync-panel-state.state-origin-unavailable {
   background: rgba(248, 113, 113, 0.18);
   color: var(--danger);
 }
