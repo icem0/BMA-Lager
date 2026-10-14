@@ -89,7 +89,7 @@ services:
     restart: unless-stopped
     depends_on: [api]
     ports:
-      - "${PWA_PORT:-4280}:80"
+      - "${PWA_PORT:-4280}:3000"
     networks: [internal]
 
   # Einmaliger Job: Migration ausfuehren.
