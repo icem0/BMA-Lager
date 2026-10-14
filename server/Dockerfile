@@ -33,6 +33,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=deps   /app/node_modules ./node_modules
 COPY --from=build  /app/dist          ./dist
+# SQL-Migrationen: werden vom migrator zur Laufzeit gelesen.
+# Liegen neben dist/ damit der Default-Pfad im migrator sie findet.
+COPY --from=build  /app/src/db/migrations ./migrations
 COPY package.json ./
 
 # Verzeichnis für Foto-Speicher
