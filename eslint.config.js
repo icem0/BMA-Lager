@@ -9,7 +9,15 @@ export default [
   },
   {
     name: 'app/files-to-ignore',
-    ignores: ['**/dist/**', '**/dist-ssr/**', '**/coverage/**', '**/node_modules/**', 'public/**'],
+    ignores: [
+      '**/dist/**',
+      '**/dist-ssr/**',
+      '**/coverage/**',
+      '**/node_modules/**',
+      'public/**',
+      // Server hat eigenes tsconfig + eigenen Lint-Setup (siehe server/package.json)
+      'server/**',
+    ],
   },
   ...pluginVue.configs['flat/recommended'],
   ...vueTsEslintConfig({
