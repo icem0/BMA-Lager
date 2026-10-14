@@ -167,7 +167,7 @@ Indizes: `id, artikelId, standortId, standortZielId, typ, erstelltAm, storno, st
 | `archiviert` | boolean |
 
 ### 4.5 `einstellungen`
-`key, value` (z. B. `sprache: 'de' | 'en'`, `standardStandortId`, `aktuellerBenutzer`).
+`key, value` (z. B. `sprache: 'de' | 'en'`, `standardStandortId`, `artikelTypen`).
 
 ### 4.6 `auditLog` – append-only
 `id, aktion, entitaet, entitaetId, daten, zeit` – wird ausschließlich vom Service befüllt.
