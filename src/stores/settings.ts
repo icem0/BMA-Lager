@@ -1,5 +1,5 @@
 // Settings-Store: liest die `einstellungen`-Tabelle reaktiv via Dexie liveQuery.
-// Speichert sprache, standardStandortId, aktuellerBenutzer, artikelTypen.
+// Speichert sprache, standardStandortId, artikelTypen.
 
 import { defineStore } from 'pinia'
 import { liveQuery, type Subscription } from 'dexie'
@@ -12,7 +12,6 @@ export type Sprache = 'de' | 'en'
 export interface Settings {
   sprache: Sprache
   standardStandortId: string | null
-  aktuellerBenutzer: string
   /** Konfigurierbare Liste der Artikel-Typen (Reihenfolge wie angelegt). */
   artikelTypen: string[]
 }
@@ -20,7 +19,6 @@ export interface Settings {
 const DEFAULTS: Settings = {
   sprache: 'de',
   standardStandortId: null,
-  aktuellerBenutzer: '',
   artikelTypen: [
     'Koppler',
     'Alarmierung',
@@ -56,7 +54,6 @@ function fromMap(m: Map<string, string>): Settings {
   return {
     sprache: (m.get('sprache') as Sprache | undefined) ?? DEFAULTS.sprache,
     standardStandortId: m.get('standardStandortId') ?? DEFAULTS.standardStandortId,
-    aktuellerBenutzer: m.get('aktuellerBenutzer') ?? DEFAULTS.aktuellerBenutzer,
     artikelTypen: typen,
   }
 }
@@ -99,10 +96,6 @@ export const useSettingsStore = defineStore('settings', () => {
     await setKey('standardStandortId', id ?? '')
   }
 
-  async function setBenutzer(name: string): Promise<void> {
-    await setKey('aktuellerBenutzer', name)
-  }
-
   async function setArtikelTypen(typen: string[]): Promise<void> {
     await setKey('artikelTypen', JSON.stringify(typen))
   }
@@ -114,7 +107,6 @@ export const useSettingsStore = defineStore('settings', () => {
     stop,
     setSprache,
     setStandardStandort,
-    setBenutzer,
     setArtikelTypen,
   }
 })

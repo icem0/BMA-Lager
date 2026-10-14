@@ -13,14 +13,12 @@ const standort = useStandortStore()
 const auth = useAuthStore()
 
 const sprache = ref(settings.settings.sprache)
-const benutzer = ref(settings.settings.aktuellerBenutzer)
 const standardId = ref<string>(settings.settings.standardStandortId ?? '')
 
 watch(
   () => settings.settings,
   (s) => {
     sprache.value = s.sprache
-    benutzer.value = s.aktuellerBenutzer
     standardId.value = s.standardStandortId ?? ''
   },
 )
@@ -30,7 +28,6 @@ const statusmeldung = ref('')
 
 async function speichern(): Promise<void> {
   await settings.setSprache(sprache.value)
-  await settings.setBenutzer(benutzer.value.trim())
   await settings.setStandardStandort(standardId.value || null)
   statusmeldung.value = t('view.settings.gespeichert')
   setTimeout(() => {
@@ -60,10 +57,6 @@ function abmelden(): void {
           </select>
         </label>
         <label>
-          <span>{{ t('view.settings.benutzer') }}</span>
-          <input v-model="benutzer" type="text" autocomplete="off" />
-        </label>
-        <label>
           <span>{{ t('view.settings.standardStandort') }}</span>
           <select v-model="standardId">
             <option value="">— {{ t('view.settings.nichtGelegt') }} —</option>
@@ -80,6 +73,10 @@ function abmelden(): void {
 
     <h2>Account</h2>
     <div class="card quick-links">
+      <div class="readonly">
+        <span class="label">{{ t('view.settings.benutzer') }}</span>
+        <span class="value">{{ auth.anzeigename || '—' }}</span>
+      </div>
       <RouterLink to="/passwort-aendern">Passwort ändern</RouterLink>
       <button type="button" class="danger" @click="abmelden">Abmelden</button>
     </div>
@@ -113,5 +110,17 @@ function abmelden(): void {
   padding: 0.4rem 0;
   font-weight: 500;
   width: max-content;
+}
+.readonly {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.readonly .label {
+  font-size: 0.85em;
+  color: var(--text-muted, #666);
+}
+.readonly .value {
+  font-weight: 500;
 }
 </style>

@@ -114,13 +114,14 @@ function zeigeInfo(): void {
 
 const versionLabel = `v${version} · ${commit}`
 const buildDateFormatiert = new Date(buildDate).toLocaleString()
+const repoUrl = 'https://github.com/icem0/bma-lager'
 const versionOffen = ref(false)
 const copyStatus = ref<'idle' | 'ok' | 'fehler'>('idle')
 let copyResetTimer: ReturnType<typeof setTimeout> | null = null
 
 // Einzeiliger Build-String fuer Copy/Paste in Bug-Reports o. ae.
-// Format: bma-lager v0.1.0 (commit f0ad4fe, branch main, built 14.10.2026 12:55:22)
-const versionString = `bma-lager v${version} (commit ${commit}, branch ${branch}, built ${buildDateFormatiert})`
+// Format: bma-lager v0.1.0 (commit f0ad4fe, branch main, built 14.10.2026 12:55:22) · MIT · https://github.com/icem0/bma-lager
+const versionString = `bma-lager v${version} (commit ${commit}, branch ${branch}, built ${buildDateFormatiert}) · MIT · ${repoUrl}`
 
 function toggleVersion(): void {
   versionOffen.value = !versionOffen.value
@@ -305,11 +306,76 @@ async function copyVersion(): Promise<void> {
           <dd>{{ buildDateFormatiert }}</dd>
         </div>
       </dl>
+      <p class="version-footer">
+        by
+        <a
+          :href="repoUrl"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="version-footer-link"
+        >icem0</a>
+        ·
+        <a
+          :href="repoUrl"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="version-footer-link"
+        >github.com/icem0/bma-lager</a>
+        · MIT-Lizenz
+      </p>
       <div class="version-actions">
-        <button type="button" class="copy-btn" @click="copyVersion" :title="versionString">
-          <span v-if="copyStatus === 'idle'">In Zwischenablage kopieren</span>
-          <span v-else-if="copyStatus === 'ok'">Kopiert ✓</span>
-          <span v-else>Kopieren fehlgeschlagen</span>
+        <button
+          type="button"
+          class="copy-btn"
+          :class="`state-${copyStatus}`"
+          :title="copyStatus === 'ok' ? 'Kopiert' : versionString"
+          :aria-label="
+            copyStatus === 'ok' ? 'Kopiert' : 'Build-Info in die Zwischenablage kopieren'
+          "
+          @click="copyVersion"
+        >
+          <svg
+            v-if="copyStatus === 'idle'"
+            class="icon"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+          </svg>
+          <svg
+            v-else-if="copyStatus === 'ok'"
+            class="icon"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <polyline points="20 6 9 17 4 12"></polyline>
+          </svg>
+          <svg
+            v-else
+            class="icon"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="12" y1="8" x2="12" y2="12"></line>
+            <line x1="12" y1="16" x2="12.01" y2="16"></line>
+          </svg>
         </button>
         <button type="button" @click="closeVersion">Schließen</button>
       </div>
@@ -418,6 +484,22 @@ async function copyVersion(): Promise<void> {
   flex-wrap: wrap;
 }
 
+.version-panel .version-footer {
+  margin: 0 0 0.75rem;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.version-panel .version-footer-link {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.version-panel .version-footer-link:hover {
+  text-decoration: underline;
+}
+
 .version-panel .version-actions button {
   flex: 1 1 auto;
   padding: 0.45rem 0.7rem;
@@ -437,6 +519,33 @@ async function copyVersion(): Promise<void> {
 }
 
 .version-panel .version-actions .copy-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  padding: 0;
   font-family: var(--mono);
+  color: var(--text-muted);
+}
+
+.version-panel .version-actions .copy-btn:hover {
+  color: var(--text-strong);
+}
+
+.version-panel .version-actions .copy-btn .icon {
+  width: 1.05rem;
+  height: 1.05rem;
+  display: block;
+}
+
+.version-panel .version-actions .copy-btn.state-ok {
+  color: var(--accent);
+  border-color: var(--accent-border);
+}
+
+.version-panel .version-actions .copy-btn.state-fehler {
+  color: #e35d6a;
+  border-color: #e35d6a;
 }
 </style>

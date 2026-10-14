@@ -47,6 +47,7 @@ export const useAuthStore = defineStore('auth', () => {
   const istAdmin = computed(() => session.value?.rolle === 'admin')
   const userId = computed(() => session.value?.userId ?? null)
   const email = computed(() => session.value?.email ?? null)
+  const anzeigename = computed(() => session.value?.anzeigename ?? '')
   const mussPasswortAendern = computed(() => session.value?.mustChangePassword === true)
 
   // ---------- Login ----------
@@ -99,6 +100,7 @@ export const useAuthStore = defineStore('auth', () => {
         userId: serverAntwort.user.id,
         email: serverAntwort.user.email,
         rolle: serverAntwort.user.rolle,
+        anzeigename: serverAntwort.user.anzeigename,
         loginAm: new Date().toISOString(),
         mustChangePassword: serverAntwort.user.mustChangePassword,
         jwtExpiresAt,
@@ -139,6 +141,7 @@ export const useAuthStore = defineStore('auth', () => {
       userId: sub,
       email: trimmedEmail,
       rolle: role,
+      anzeigename: session.value?.anzeigename,
       loginAm: new Date().toISOString(),
       mustChangePassword: false,
       jwtExpiresAt: (expires ?? inHours(12)).toISOString(),
@@ -231,6 +234,7 @@ export const useAuthStore = defineStore('auth', () => {
     istAdmin,
     userId,
     email,
+    anzeigename,
     mussPasswortAendern,
     anmelden,
     abmelden,

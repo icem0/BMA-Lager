@@ -17,6 +17,8 @@ export interface SessionInfo {
   userId: string
   email: string
   rolle: 'admin' | 'user'
+  /** Anzeigename des Users; wird in Buchungen als `erstelltVon` geschrieben. */
+  anzeigename?: string
   loginAm: string // ISO
   mustChangePassword: boolean
   /** Ablauf des JWT (ISO). */
