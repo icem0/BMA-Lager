@@ -1,7 +1,13 @@
-// Router-Konfiguration gemäß PLAN §8.
-// Die Views sind aktuell Platzhalter; volle UI folgt in Schritt 7.
+// Router-Konfiguration gemäß PLAN §8, erweitert um Auth-Routen.
+//
+// Auth-Guards:
+//   - /login ist IMMER erreichbar
+//   - alle anderen Routen erfordern eine aktive Session (JWT im localStorage)
+//   - Admin-Routen benötigen zusätzlich Rolle=admin
 
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
+import { useAuthStore } from '../stores/auth'
+
 import DashboardView from '../views/DashboardView.vue'
 import ArtikelListView from '../views/ArtikelListView.vue'
 import ArtikelFormView from '../views/ArtikelFormView.vue'
@@ -12,8 +18,18 @@ import KommissionView from '../views/KommissionView.vue'
 import StandortListView from '../views/StandortListView.vue'
 import SettingsView from '../views/SettingsView.vue'
 import ImportView from '../views/ImportView.vue'
+import ArtikelTypenView from '../views/ArtikelTypenView.vue'
+import LoginView from '../views/LoginView.vue'
+import PasswortAendernView from '../views/PasswortAendernView.vue'
+import UserVerwaltungView from '../views/UserVerwaltungView.vue'
+import BarcodeScanView from '../views/BarcodeScanView.vue'
 
 const routes: RouteRecordRaw[] = [
+  // Auth-Routen (kein Login nötig)
+  { path: '/login', name: 'login', component: LoginView, meta: { public: true } },
+  { path: '/passwort-aendern', name: 'passwort-aendern', component: PasswortAendernView },
+
+  // Geschützte Routen
   { path: '/', name: 'dashboard', component: DashboardView },
   { path: '/artikel', name: 'artikel', component: ArtikelListView },
   { path: '/artikel/neu', name: 'artikel-neu', component: ArtikelFormView },
@@ -33,12 +49,38 @@ const routes: RouteRecordRaw[] = [
   },
   { path: '/standorte', name: 'standorte', component: StandortListView },
   { path: '/einstellungen', name: 'einstellungen', component: SettingsView },
+  {
+    path: '/einstellungen/typen',
+    name: 'einstellungen-typen',
+    component: ArtikelTypenView,
+  },
+  {
+    path: '/einstellungen/user',
+    name: 'einstellungen-user',
+    component: UserVerwaltungView,
+    meta: { requiresAdmin: true },
+  },
   { path: '/import', name: 'import', component: ImportView },
-  // Catch-all: auf Dashboard zurückfallen, damit die App nie "leer" ist.
+  { path: '/scan', name: 'scan', component: BarcodeScanView },
   { path: '/:pathMatch(.*)*', redirect: '/' },
 ]
 
 export const router = createRouter({
   history: createWebHistory(),
   routes,
+})
+
+router.beforeEach((to) => {
+  const auth = useAuthStore()
+  const isPublic = to.meta.public === true
+  const requiresAdmin = to.meta.requiresAdmin === true
+
+  if (isPublic) return true
+  if (!auth.istAngemeldet) {
+    return { name: 'login', query: { redirect: to.fullPath } }
+  }
+  if (requiresAdmin && !auth.istAdmin) {
+    return { name: 'dashboard' }
+  }
+  return true
 })

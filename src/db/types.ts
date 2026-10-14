@@ -14,7 +14,10 @@ export type BuchungsTyp =
 export interface Artikel {
   id: string
   sharePointId: number | null
+  /** Legacy-Einzelfoto (CSV-Import). Neu: Array fotoUrls. */
   foto: string | null
+  /** Liste der synchronisierten Bild-URLs. */
+  fotoUrls: string[]
   titel: string
   status: ArtikelStatus
   typ: string
@@ -37,6 +40,9 @@ export interface Standort {
   kennzeichen: string | null
   standard: boolean
   archiviert: boolean
+  /** Server-Sync-Felder (PLAN §9b): für Last-Writer-Wins beim Pull */
+  geaendertAm: Iso | null
+  erstelltAm: Iso
 }
 
 export interface Buchung {
@@ -63,6 +69,10 @@ export interface Buchung {
   storno: boolean
   /** Back-Ref: welche Storno-Buchung hat das Original storniert? */
   storniertDurch: string | null
+  /** Vom Server vergebene kanonische ID (nach erfolgreichem Push gesetzt).
+   *  Im Normalfall identisch mit `id` — nur abweichend, wenn Server-Replikation
+   *  eine andere ID vergibt (zukünftiges Feature). */
+  serverId: string | null
 }
 
 export interface Projekt {
@@ -70,6 +80,8 @@ export interface Projekt {
   nummer: string
   name: string | null
   archiviert: boolean
+  geaendertAm: Iso | null
+  erstelltAm: Iso
 }
 
 export interface Einstellung {
@@ -86,6 +98,9 @@ export interface AuditLogEintrag {
   zeit: Iso
 }
 
+/** Rolle des eingeloggten Users (Spiegel des Server-Users). */
+export type UserRolle = 'admin' | 'user'
+
 /** Eingabe-Parameter für createEinlagerung / createEntnahme */
 export interface BuchungsEingabe {
   artikelId: string
@@ -97,4 +112,22 @@ export interface BuchungsEingabe {
   mitteilungAn?: string | null
   erstelltAm?: Iso
   clientEingabeAm?: Iso
+}
+
+// ---------- Sync (PLAN §4.7–4.9) ----------
+
+export type OutboxEntity = 'artikel' | 'buchung' | 'standort' | 'projekt' | 'foto'
+export type OutboxOp = 'create' | 'update' | 'delete' | 'upload'
+
+export interface OutboxEintrag {
+  id: string
+  entity: OutboxEntity
+  op: OutboxOp
+  /** JSON-serialisiertes Payload, exakt wie es zum Server geht. */
+  payload: string
+  createdAt: Iso
+  /** null → noch nicht gepusht; ISO → erfolgreich synchronisiert. */
+  syncedAt: Iso | null
+  attempts: number
+  lastError: string | null
 }

@@ -1,10 +1,12 @@
 // Buchungs-Operationen.
 // Alle Mutationen laufen in einer Dexie-Transaktion (atomic),
 // damit Storno-Pointer, Paar-Ids und Audit-Log konsistent bleiben.
+// Schreiboperationen befüllen zusätzlich die Outbox für den Server-Sync.
 
 import { getDb } from '../db/database'
 import type { Buchung, BuchungsEingabe, BuchungsTyp, Iso } from '../db/types'
 import { jetztIso, neueUuid } from './ids'
+import { queueOp } from '../services/sync/worker'
 import {
   BereitsStorniertError,
   GleicherStandortError,
@@ -37,6 +39,7 @@ function standardEingabeZuBuchung(
     stornoVon: null,
     storno: false,
     storniertDurch: null,
+    serverId: null,
     ...extras,
   }
 }
@@ -59,8 +62,9 @@ export async function createEinlagerung(eingabe: BuchungsEingabe): Promise<Buchu
   assertPflichtfeld('erstelltVon', eingabe.erstelltVon)
   const db = getDb()
   const buchung = standardEingabeZuBuchung(eingabe, 'einlagerung')
-  await db.transaction('rw', db.buchungen, db.auditLog, async () => {
+  await db.transaction('rw', db.buchungen, db.auditLog, db.outbox, async () => {
     await db.buchungen.add(buchung)
+    await queueOp('buchung', 'create', buchung)
     await auditSchreiben('createEinlagerung', buchung)
   })
   return buchung
@@ -83,7 +87,7 @@ export async function createEntnahme(eingabe: BuchungsEingabe): Promise<Entnahme
   let warnung: NegativerBestandWarnung | null = null
   const buchung = standardEingabeZuBuchung(eingabe, 'entnahme', { menge: -eingabe.menge })
 
-  await db.transaction('rw', db.buchungen, db.auditLog, async () => {
+  await db.transaction('rw', db.buchungen, db.auditLog, db.outbox, async () => {
     const aktuelle = await db.buchungen.where('artikelId').equals(eingabe.artikelId).toArray()
     const bestand = berechneBestand(aktuelle, eingabe.standortId)
     if (bestand < eingabe.menge) {
@@ -95,6 +99,7 @@ export async function createEntnahme(eingabe: BuchungsEingabe): Promise<Entnahme
       )
     }
     await db.buchungen.add(buchung)
+    await queueOp('buchung', 'create', buchung)
     await auditSchreiben('createEntnahme', buchung)
   })
   return { buchung, warnung }
@@ -147,17 +152,22 @@ export async function createUmlagerung(e: UmlagerungEingabe): Promise<Umlagerung
     stornoVon: null,
     storno: false,
     storniertDurch: null,
+    serverId: null,
   }
   const einlagerung: Buchung = { ...entnahme, id: neueUuid(), standortId: e.nachId, menge: e.menge }
   let warnung: NegativerBestandWarnung | null = null
 
-  await db.transaction('rw', db.buchungen, db.auditLog, async () => {
+  await db.transaction('rw', db.buchungen, db.auditLog, db.outbox, async () => {
     const aktuelle = await db.buchungen.where('artikelId').equals(e.artikelId).toArray()
     const bestand = berechneBestand(aktuelle, e.vonId)
     if (bestand < e.menge) {
       warnung = new NegativerBestandWarnung(e.artikelId, e.vonId, bestand, e.menge)
     }
     await db.buchungen.bulkAdd([entnahme, einlagerung])
+    await Promise.all([
+      queueOp('buchung', 'create', entnahme),
+      queueOp('buchung', 'create', einlagerung),
+    ])
     await auditSchreiben('createUmlagerung.entnahme', entnahme)
     await auditSchreiben('createUmlagerung.einlagerung', einlagerung)
   })
@@ -208,13 +218,15 @@ export async function createInventur(e: InventurEingabe): Promise<InventurErgebn
     stornoVon: null,
     storno: false,
     storniertDurch: null,
+    serverId: null,
   }
-  await db.transaction('rw', db.buchungen, db.auditLog, async () => {
+  await db.transaction('rw', db.buchungen, db.auditLog, db.outbox, async () => {
     const aktuelle = await db.buchungen.where('artikelId').equals(e.artikelId).toArray()
     vorher = berechneBestand(aktuelle, e.standortId)
     differenz = e.sollMenge - vorher
     buchung.menge = differenz
     await db.buchungen.add(buchung)
+    await queueOp('buchung', 'create', buchung)
     await auditSchreiben('createInventur', buchung)
   })
   return { buchung, differenz, vorher }
@@ -262,6 +274,7 @@ export async function createKommission(e: KommissionEingabe): Promise<Kommission
     // Storno-Buchungen zählen NICHT in den Bestand (sie stornieren sich paarweise mit dem Original aus).
     storno: true,
     storniertDurch: null,
+    serverId: null,
   }
   const neubuchung: Buchung = {
     id: neueUuid(),
@@ -280,8 +293,9 @@ export async function createKommission(e: KommissionEingabe): Promise<Kommission
     stornoVon: null,
     storno: false,
     storniertDurch: null,
+    serverId: null,
   }
-  await db.transaction('rw', db.buchungen, db.auditLog, async () => {
+  await db.transaction('rw', db.buchungen, db.auditLog, db.outbox, async () => {
     const original = await db.buchungen.get(e.buchungId)
     if (!original) throw new PflichtfeldFehltError('buchungId (nicht gefunden)')
     if (original.storno) throw new BereitsStorniertError(e.buchungId)
@@ -302,6 +316,10 @@ export async function createKommission(e: KommissionEingabe): Promise<Kommission
     original.storniertDurch = storno.id
     await db.buchungen.put(original)
     await db.buchungen.bulkAdd([storno, neubuchung])
+    await Promise.all([
+      queueOp('buchung', 'create', storno),
+      queueOp('buchung', 'create', neubuchung),
+    ])
     await auditSchreiben('createKommission.storno', storno)
     await auditSchreiben('createKommission.neubuchung', neubuchung)
   })
@@ -348,9 +366,10 @@ export async function stornieren(e: StornoEingabe): Promise<StornoErgebnis> {
     // Storno-Buchungen zählen NICHT in den Bestand (paarweise mit Original, beide stornieren sich aus).
     storno: true,
     storniertDurch: null,
+    serverId: null,
   }
   let original!: Buchung
-  await db.transaction('rw', db.buchungen, db.auditLog, async () => {
+  await db.transaction('rw', db.buchungen, db.auditLog, db.outbox, async () => {
     const orig = await db.buchungen.get(e.buchungId)
     if (!orig) throw new PflichtfeldFehltError('buchungId (nicht gefunden)')
     if (orig.storno) throw new BereitsStorniertError(e.buchungId)
@@ -366,6 +385,7 @@ export async function stornieren(e: StornoEingabe): Promise<StornoErgebnis> {
     orig.storniertDurch = storno.id
     await db.buchungen.put(orig)
     await db.buchungen.add(storno)
+    await queueOp('buchung', 'create', storno)
     await auditSchreiben('stornieren', storno)
   })
   return { storno, original }

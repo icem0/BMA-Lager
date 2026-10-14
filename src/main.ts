@@ -5,6 +5,7 @@ import App from './App.vue'
 import { router } from './router'
 import { i18n, type AppLocale } from './i18n'
 import { useSettingsStore, type Sprache } from './stores/settings'
+import { useAuthStore } from './stores/auth'
 
 const app = createApp(App)
 app.use(createPinia())
@@ -28,18 +29,17 @@ watch(
   { immediate: true },
 )
 
+// Auth: gespeichertes JWT aus localStorage wiederherstellen.
+const auth = useAuthStore()
+auth.init()
+
 // PWA-Service-Worker registrieren.
-// `autoUpdate` (vite.config.ts) sorgt dafür, dass ein neuer SW bei nächstem
-// Seitenaufruf aktiviert wird; bei Bedarf kann hier auf 'prompt' umgeschaltet
-// werden, um den Nutzer zu fragen.
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
   import('virtual:pwa-register')
     .then(({ registerSW }) => {
       registerSW({ immediate: true })
     })
     .catch((e) => {
-      // Kein Hard-Fail – App funktioniert auch ohne SW, nur ohne Offline-Cache.
-
       console.warn('Service-Worker-Registrierung fehlgeschlagen:', e)
     })
 }

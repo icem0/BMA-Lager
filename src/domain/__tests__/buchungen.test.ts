@@ -31,6 +31,7 @@ async function seedArtikel(id: string, name: string): Promise<void> {
     id,
     sharePointId: null,
     foto: null,
+    fotoUrls: [],
     titel: name,
     status: 'verfuegbar',
     typ: 'Test',
@@ -56,6 +57,8 @@ async function seedStandort(id: string, name: string, standard = false): Promise
     kennzeichen: null,
     standard,
     archiviert: false,
+    geaendertAm: '2025-01-01T00:00:00.000Z',
+    erstelltAm: '2025-01-01T00:00:00.000Z',
   }
   await testDb.standorte.add(standort)
 }
