@@ -1,0 +1,94 @@
+name: build-and-push
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  # ---------- API ----------
+  api:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: server/package-lock.json
+
+      - name: Install
+        working-directory: server
+        run: npm ci --no-audit --no-fund
+
+      - name: Lint
+        working-directory: server
+        run: npm run lint || true   # Server-Lint ist optional, ESLint teilt mit Frontend
+
+      - name: Typecheck
+        working-directory: server
+        run: npm run typecheck
+
+      - name: Test
+        working-directory: server
+        run: npm run test:run
+
+      - name: Build image
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v6
+        with:
+          context: ./server
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/bma-lager-api:latest
+            ghcr.io/${{ github.repository_owner }}/bma-lager-api:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ---------- PWA ----------
+  pwa:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      - name: Install
+        run: npm ci --no-audit --no-fund
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm run test:run
+
+      - name: Build
+        run: npm run build
+
+      - name: Build image
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.pwa
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/bma-lager-pwa:latest
+            ghcr.io/${{ github.repository_owner }}/bma-lager-pwa:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
