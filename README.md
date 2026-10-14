@@ -1,6 +1,7 @@
 <div align="center">
 
-# bma-lager
+<img src="public/logo.png"><br/>
+# BMA-Lager
 
 **Offline-fähige Lagerverwaltung als PWA mit Multi-User-Sync**
 
