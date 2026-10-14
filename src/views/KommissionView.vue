@@ -50,70 +50,42 @@ function abbrechen(): void {
 
 <template>
   <section v-if="original" class="view">
-    <h1>{{ t('view.kommission.h1') }}</h1>
-    <p>{{ t('view.kommission.erklaerung') }}</p>
+    <header class="view-head">
+      <h1>{{ t('view.kommission.h1') }}</h1>
+    </header>
 
-    <dl class="meta">
-      <div>
-        <dt>Original-Menge</dt>
-        <dd>{{ original.menge }}</dd>
-      </div>
-      <div>
-        <dt>Original-Projekt</dt>
-        <dd>{{ original.projekt ?? '—' }}</dd>
-      </div>
-    </dl>
+    <p class="hint">{{ t('view.kommission.erklaerung') }}</p>
 
-    <form class="form" @submit.prevent="speichern">
-      <label>
-        <span>{{ t('view.kommission.neuesProjekt') }} *</span>
-        <input v-model="neuesProjekt" required autocomplete="off" />
-      </label>
+    <div class="card">
+      <dl class="meta">
+        <div>
+          <dt>Original-Menge</dt>
+          <dd>{{ original.menge }}</dd>
+        </div>
+        <div>
+          <dt>Original-Projekt</dt>
+          <dd>{{ original.projekt ?? '—' }}</dd>
+        </div>
+      </dl>
+    </div>
 
-      <p v-if="fehler" class="fehler">{{ fehler }}</p>
+    <div class="card">
+      <form class="form" @submit.prevent="speichern">
+        <label>
+          <span>{{ t('view.kommission.neuesProjekt') }} *</span>
+          <input v-model="neuesProjekt" required autocomplete="off" />
+        </label>
 
-      <div class="actions">
-        <button type="submit">{{ t('view.kommission.speichern') }}</button>
-        <button type="button" @click="abbrechen">{{ t('view.kommission.abbrechen') }}</button>
-      </div>
-    </form>
+        <p v-if="fehler" class="fehler">{{ fehler }}</p>
+
+        <div class="form-actions">
+          <button type="submit" class="primary">{{ t('view.kommission.speichern') }}</button>
+          <button type="button" @click="abbrechen">{{ t('view.kommission.abbrechen') }}</button>
+        </div>
+      </form>
+    </div>
   </section>
   <section v-else class="view">
-    <p>Lade…</p>
+    <p class="muted">Lade…</p>
   </section>
 </template>
-
-<style scoped>
-.view {
-  max-width: 640px;
-}
-.meta {
-  display: flex;
-  gap: 1.5rem;
-  margin: 1rem 0;
-}
-.meta div {
-  display: flex;
-  flex-direction: column;
-}
-.meta dt {
-  font-weight: 600;
-  color: #555;
-  font-size: 0.85rem;
-}
-.form {
-  display: grid;
-  gap: 0.75rem;
-}
-.form label {
-  display: grid;
-  gap: 0.25rem;
-}
-.actions {
-  display: flex;
-  gap: 0.5rem;
-}
-.fehler {
-  color: #b00020;
-}
-</style>

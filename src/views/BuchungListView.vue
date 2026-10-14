@@ -15,14 +15,13 @@ const standortStore = useStandortStore()
 const nurAktive = ref(true)
 const artikelFilter = ref<string>('')
 
-const zeilen = computed<Buchung[]>(() => {
-  const alle = buchungStore.buchungen
-  return alle.filter((b) => {
+const zeilen = computed<Buchung[]>(() =>
+  buchungStore.buchungen.filter((b) => {
     if (nurAktive.value && b.storno) return false
     if (artikelFilter.value && b.artikelId !== artikelFilter.value) return false
     return true
-  })
-})
+  }),
+)
 
 function nameArtikel(id: string): string {
   return artikelStore.byId(id)?.titel ?? '—'
@@ -36,6 +35,10 @@ function formatTyp(typ: Buchung['typ']): string {
     return t(`view.buchung.form.typen.${typ}`)
   }
   return typ
+}
+
+function formatDatum(iso: string): string {
+  return new Date(iso).toLocaleString()
 }
 
 async function stornieren(b: Buchung): Promise<void> {
@@ -53,10 +56,10 @@ async function stornieren(b: Buchung): Promise<void> {
   <section class="view">
     <header class="view-head">
       <h1>{{ t('view.buchung.h1') }}</h1>
-      <RouterLink to="/buchung/neu" class="btn">{{ t('view.common.neu') }}</RouterLink>
+      <RouterLink to="/buchung/neu" class="btn primary">{{ t('view.common.neu') }}</RouterLink>
     </header>
 
-    <form class="filter" @submit.prevent>
+    <div class="filter-bar">
       <select v-model="artikelFilter">
         <option value="">— Alle Artikel —</option>
         <option v-for="a in artikelStore.artikel" :key="a.id" :value="a.id">{{ a.titel }}</option>
@@ -65,9 +68,9 @@ async function stornieren(b: Buchung): Promise<void> {
         <input v-model="nurAktive" type="checkbox" />
         <span>nur aktive</span>
       </label>
-    </form>
+    </div>
 
-    <p v-if="zeilen.length === 0" class="leer">{{ t('view.buchung.leer') }}</p>
+    <p v-if="zeilen.length === 0" class="empty-state">{{ t('view.buchung.leer') }}</p>
 
     <table v-else class="data">
       <thead>
@@ -76,26 +79,37 @@ async function stornieren(b: Buchung): Promise<void> {
           <th>{{ t('view.buchung.spalten.artikel') }}</th>
           <th>{{ t('view.buchung.spalten.standort') }}</th>
           <th>{{ t('view.buchung.spalten.typ') }}</th>
-          <th>{{ t('view.buchung.spalten.menge') }}</th>
+          <th class="num">{{ t('view.buchung.spalten.menge') }}</th>
           <th>{{ t('view.buchung.spalten.projekt') }}</th>
+          <th>{{ t('view.buchung.spalten.von') }}</th>
           <th></th>
         </tr>
       </thead>
       <tbody>
         <tr v-for="b in zeilen" :key="b.id" :class="{ storno: b.storno }">
-          <td>{{ new Date(b.erstelltAm).toLocaleString() }}</td>
+          <td>{{ formatDatum(b.erstelltAm) }}</td>
           <td>{{ nameArtikel(b.artikelId) }}</td>
           <td>{{ nameStandort(b.standortId) }}</td>
-          <td>{{ formatTyp(b.typ) }}</td>
-          <td :class="b.menge > 0 ? 'plus' : b.menge < 0 ? 'minus' : ''">
+          <td>
+            <span class="badge">{{ formatTyp(b.typ) }}</span>
+          </td>
+          <td :class="b.menge > 0 ? 'num-plus' : b.menge < 0 ? 'num-minus' : 'num'">
             {{ b.menge > 0 ? '+' : '' }}{{ b.menge }}
           </td>
           <td>{{ b.projekt ?? '—' }}</td>
+          <td>{{ b.erstelltVon }}</td>
           <td class="actions-cell">
-            <button v-if="!b.storno && b.typ !== 'storno'" type="button" @click="stornieren(b)">
-              stornieren
+            <button
+              v-if="!b.storno && b.typ !== 'storno' && b.typ !== 'kommission'"
+              type="button"
+              class="danger"
+              @click="stornieren(b)"
+            >
+              Storno
             </button>
-            <RouterLink v-if="b.typ === 'kommission'" :to="`/kommission/${b.id}`">…</RouterLink>
+            <RouterLink v-if="b.typ === 'kommission'" :to="`/kommission/${b.id}`" class="btn">
+              …
+            </RouterLink>
           </td>
         </tr>
       </tbody>
@@ -104,61 +118,9 @@ async function stornieren(b: Buchung): Promise<void> {
 </template>
 
 <style scoped>
-.view {
-  max-width: 1100px;
-}
-.view-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 1rem;
-  margin-bottom: 1rem;
-}
-.btn {
-  background: #0b3d91;
-  color: white;
-  padding: 0.4rem 0.8rem;
-  border-radius: 4px;
-  text-decoration: none;
-}
-.filter {
-  display: flex;
-  gap: 0.75rem;
-  align-items: center;
-  margin-bottom: 1rem;
-  flex-wrap: wrap;
-}
-.filter .check {
-  display: flex;
-  gap: 0.25rem;
-  align-items: center;
-}
-.data {
-  width: 100%;
-  border-collapse: collapse;
-}
-.data th,
-.data td {
-  padding: 0.4rem;
-  border-bottom: 1px solid #eee;
-  text-align: left;
-}
-.plus {
-  color: #0a7a3a;
-}
-.minus {
-  color: #b00020;
-}
-.storno {
-  color: #999;
-  text-decoration: line-through;
-}
-.actions-cell {
-  display: flex;
-  gap: 0.5rem;
-  justify-content: flex-end;
-}
-.leer {
-  color: #666;
+.data .num {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  font-weight: 600;
 }
 </style>

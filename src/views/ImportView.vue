@@ -2,7 +2,7 @@
 // CSV-Import-Wizard gemäß PLAN §11.
 // Schritt 1: Datei wählen → Schritt 2: Mapping → Schritt 3: Validierung → Schritt 4: Import.
 
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { parseCsv, type ParsedCsv } from '../services/import/csv-parser'
 import {
@@ -18,7 +18,11 @@ import {
   validiereWarenMapping,
   type ValidierungsErgebnis,
 } from '../services/import/validierung'
-import { importAusCsv, type ImportBericht } from '../services/import/import'
+import {
+  importArtikelAusCsv,
+  importWarenAusCsv,
+  type ImportBericht,
+} from '../services/import/import'
 import { exportVollBackup, backupAlsText } from '../services/import/export'
 
 const { t } = useI18n()
@@ -87,8 +91,6 @@ async function onWarenDateiChange(e: Event): Promise<void> {
   bericht.value = null
 }
 
-const allesBereit = computed(() => lagerParsed.value !== null && warenParsed.value !== null)
-
 function validieren(): void {
   validierung.value = { lager: null, waren: null }
   if (lagerParsed.value) {
@@ -107,24 +109,61 @@ function validieren(): void {
   }
 }
 
-const allesOk = computed(() => {
-  const v = validierung.value
-  if (!v.lager || !v.waren) return false
-  return v.lager.ok && v.waren.ok
+// Sobald Dateien geladen sind oder das Mapping sich ändert, automatisch validieren.
+// Damit muss der User nicht erst auf „Validieren" klicken.
+watch(
+  () => [lagerParsed.value, warenParsed.value, lagerMapping.value, warenMapping.value],
+  () => validieren(),
+  { deep: true },
+)
+
+const lagerOk = computed(() => {
+  const v = validierung.value.lager
+  return v ? v.ok : false
 })
 
-async function importieren(): Promise<void> {
-  if (!lagerParsed.value || !warenParsed.value) return
+const warenOk = computed(() => {
+  const v = validierung.value.waren
+  return v ? v.ok : false
+})
+
+const importHinweis = computed<string>(() => {
+  const v = validierung.value
+  const teile: string[] = []
+  if (!v.lager) teile.push('Lager: nicht geprüft')
+  else if (!v.lager.ok) teile.push(`Lager: ${v.lager.probleme.length} Problem(e)`)
+  if (!v.waren) teile.push('Warenfluss: nicht geprüft')
+  else if (!v.waren.ok) teile.push(`Warenfluss: ${v.waren.probleme.length} Problem(e)`)
+  if (teile.length === 0) return ''
+  return 'Validierung – ' + teile.join(' · ')
+})
+
+async function importNurArtikel(): Promise<void> {
+  if (!lagerParsed.value) return
   laufend.value = true
   fehler.value = ''
   try {
-    bericht.value = await importAusCsv({
-      artikelRows: lagerParsed.value.rows,
-      artikelHeaders: lagerParsed.value.headers,
-      artikelMapping: lagerMapping.value,
-      warenRows: warenParsed.value.rows,
-      warenHeaders: warenParsed.value.headers,
-      warenMapping: warenMapping.value,
+    bericht.value = await importArtikelAusCsv({
+      rows: lagerParsed.value.rows,
+      headers: lagerParsed.value.headers,
+      mapping: lagerMapping.value,
+    })
+  } catch (e) {
+    fehler.value = String(e)
+  } finally {
+    laufend.value = false
+  }
+}
+
+async function importNurWaren(): Promise<void> {
+  if (!warenParsed.value) return
+  laufend.value = true
+  fehler.value = ''
+  try {
+    bericht.value = await importWarenAusCsv({
+      rows: warenParsed.value.rows,
+      headers: warenParsed.value.headers,
+      mapping: warenMapping.value,
       hauptLagerName: 'Hauptlager',
     })
   } catch (e) {
@@ -157,17 +196,25 @@ async function backupSpeichern(): Promise<void> {
       <label>
         <span>Lager.csv</span>
         <input type="file" accept=".csv,text/csv" @change="onLagerDateiChange" />
+        <small v-if="lagerDatei" class="hint hint-ok">
+          ✓ {{ lagerDatei.name }} ({{ lagerParsed?.rowCount ?? 0 }} Zeilen)
+        </small>
+        <small v-else class="hint hint-warn">noch nicht geladen</small>
       </label>
       <label>
         <span>Warenfluss.csv</span>
         <input type="file" accept=".csv,text/csv" @change="onWarenDateiChange" />
+        <small v-if="warenDatei" class="hint hint-ok">
+          ✓ {{ warenDatei.name }} ({{ warenParsed?.rowCount ?? 0 }} Zeilen)
+        </small>
+        <small v-else class="hint hint-warn">noch nicht geladen</small>
       </label>
       <button type="button" @click="backupSpeichern">Backup exportieren</button>
     </div>
 
-    <div v-if="lagerParsed" class="mapping">
+    <div v-if="lagerParsed" class="card">
       <h2>2a. Mapping Lager</h2>
-      <table>
+      <table class="data">
         <thead>
           <tr>
             <th>Spalte</th>
@@ -188,9 +235,9 @@ async function backupSpeichern(): Promise<void> {
       </table>
     </div>
 
-    <div v-if="warenParsed" class="mapping">
+    <div v-if="warenParsed" class="card">
       <h2>2b. Mapping Warenfluss</h2>
-      <table>
+      <table class="data">
         <thead>
           <tr>
             <th>Spalte</th>
@@ -211,11 +258,20 @@ async function backupSpeichern(): Promise<void> {
       </table>
     </div>
 
-    <div v-if="allesBereit" class="actions">
-      <button type="button" :disabled="laufend" @click="validieren">3. Validieren</button>
-      <button type="button" :disabled="!allesOk || laufend" class="primary" @click="importieren">
-        {{ laufend ? 'Importiere…' : '4. Import starten' }}
+    <div v-if="lagerParsed || warenParsed" class="actions">
+      <button
+        type="button"
+        :disabled="!lagerOk || laufend"
+        class="primary"
+        @click="importNurArtikel"
+      >
+        {{ laufend ? 'Importiere…' : 'Artikel importieren' }}
       </button>
+      <button type="button" :disabled="!warenOk || laufend" class="primary" @click="importNurWaren">
+        {{ laufend ? 'Importiere…' : 'Buchungen importieren' }}
+      </button>
+      <button type="button" :disabled="laufend" @click="validieren">Erneut validieren</button>
+      <p v-if="!(lagerOk && warenOk)" class="hint hint-warn">{{ importHinweis }}</p>
     </div>
 
     <div v-if="validierung.lager || validierung.waren" class="validation">
@@ -304,5 +360,14 @@ async function backupSpeichern(): Promise<void> {
   color: #888;
   font-size: 0.85rem;
   margin-top: 2rem;
+}
+.hint.hint-warn {
+  color: #b07500;
+  margin: 0 0 0 0.5rem;
+}
+.hint.hint-ok {
+  color: #0a7a3a;
+  display: block;
+  margin-top: 0.25rem;
 }
 </style>

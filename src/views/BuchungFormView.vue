@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, onMounted } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute, useRouter, RouterLink } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useArtikelStore } from '../stores/artikel'
 import { useStandortStore } from '../stores/standort'
@@ -31,7 +31,6 @@ const fehler = ref<string>('')
 const warnung = ref<string>('')
 
 onMounted(() => {
-  // Falls ein Standard-Standort erst nach Mount aus dem Store kommt, nimm den.
   if (!standortId.value) {
     standortId.value = standortStore.standardlager?.id ?? ''
   }
@@ -134,103 +133,96 @@ function abbrechen(): void {
 
 <template>
   <section class="view">
-    <h1>{{ t('view.buchung.form.h1') }}</h1>
+    <header class="view-head">
+      <h1>{{ t('view.buchung.form.h1') }}</h1>
+      <RouterLink to="/buchungen" class="btn">{{ t('view.buchung.form.abbrechen') }}</RouterLink>
+    </header>
 
-    <form class="form" @submit.prevent="speichern">
-      <label>
-        <span>{{ t('view.buchung.form.typ') }}</span>
-        <select v-model="typ">
-          <option v-for="opt in typen" :key="opt" :value="opt">
-            {{ t(`view.buchung.form.typen.${opt}`) }}
-          </option>
-        </select>
-      </label>
+    <div class="card">
+      <form class="form" @submit.prevent="speichern">
+        <label>
+          <span>{{ t('view.buchung.form.typ') }}</span>
+          <select v-model="typ">
+            <option v-for="opt in typen" :key="opt" :value="opt">
+              {{ t(`view.buchung.form.typen.${opt}`) }}
+            </option>
+          </select>
+        </label>
 
-      <label>
-        <span>{{ t('view.buchung.form.artikel') }} *</span>
-        <select v-model="artikelId" required>
-          <option value="" disabled>— wählen —</option>
-          <option v-for="a in artikelStore.artikel" :key="a.id" :value="a.id">
-            {{ a.titel }}
-          </option>
-        </select>
-      </label>
+        <label>
+          <span>{{ t('view.buchung.form.artikel') }} *</span>
+          <select v-model="artikelId" required>
+            <option value="" disabled>— wählen —</option>
+            <option v-for="a in artikelStore.artikel" :key="a.id" :value="a.id">
+              {{ a.titel }}
+            </option>
+          </select>
+        </label>
 
-      <label>
-        <span>
-          {{ zielErforderlich ? t('view.buchung.form.standort') : t('view.buchung.form.standort') }}
-          *
-        </span>
-        <select v-model="standortId" required>
-          <option v-for="s in standortStore.aktive" :key="s.id" :value="s.id">{{ s.name }}</option>
-        </select>
-      </label>
+        <label>
+          <span>{{ t('view.buchung.form.standort') }} *</span>
+          <select v-model="standortId" required>
+            <option v-for="s in standortStore.aktive" :key="s.id" :value="s.id">
+              {{ s.name }}
+            </option>
+          </select>
+        </label>
 
-      <label v-if="zielErforderlich">
-        <span>{{ t('view.buchung.form.zielstandort') }} *</span>
-        <select v-model="zielStandortId" required>
-          <option value="" disabled>— wählen —</option>
-          <option v-for="s in standortStore.aktive" :key="s.id" :value="s.id">{{ s.name }}</option>
-        </select>
-      </label>
+        <label v-if="zielErforderlich">
+          <span>{{ t('view.buchung.form.zielstandort') }} *</span>
+          <select v-model="zielStandortId" required>
+            <option value="" disabled>— wählen —</option>
+            <option v-for="s in standortStore.aktive" :key="s.id" :value="s.id">
+              {{ s.name }}
+            </option>
+          </select>
+        </label>
 
-      <label v-if="mengeErforderlich">
-        <span>{{ t('view.buchung.form.menge') }} *</span>
-        <input v-model.number="menge" type="number" min="1" required />
-      </label>
+        <div class="row">
+          <label v-if="mengeErforderlich">
+            <span>{{ t('view.buchung.form.menge') }} *</span>
+            <input v-model.number="menge" type="number" min="1" required />
+          </label>
+          <label v-if="sollMengeErforderlich">
+            <span>{{ t('view.buchung.form.sollMenge') }} *</span>
+            <input v-model.number="sollMenge" type="number" min="0" required />
+          </label>
+        </div>
 
-      <label v-if="sollMengeErforderlich">
-        <span>{{ t('view.buchung.form.sollMenge') }} *</span>
-        <input v-model.number="sollMenge" type="number" min="0" required />
-      </label>
+        <label>
+          <span>{{ t('view.buchung.form.projekt') }}</span>
+          <input v-model="projekt" autocomplete="off" />
+        </label>
+        <label>
+          <span>{{ t('view.buchung.form.kommentar') }}</span>
+          <input v-model="kommentar" autocomplete="off" />
+        </label>
 
-      <label>
-        <span>{{ t('view.buchung.form.projekt') }}</span>
-        <input v-model="projekt" autocomplete="off" />
-      </label>
+        <p v-if="fehler" class="fehler">{{ fehler }}</p>
+        <p v-if="warnung" class="hint hint-warn">{{ warnung }}</p>
 
-      <label>
-        <span>{{ t('view.buchung.form.kommentar') }}</span>
-        <input v-model="kommentar" autocomplete="off" />
-      </label>
+        <div class="form-actions">
+          <button type="submit" class="primary">{{ t('view.buchung.form.speichern') }}</button>
+          <button type="button" @click="abbrechen">
+            {{ t('view.buchung.form.abbrechen') }}
+          </button>
+        </div>
 
-      <p v-if="fehler" class="fehler">{{ fehler }}</p>
-      <p v-if="warnung" class="warnung">{{ warnung }}</p>
-
-      <div class="actions">
-        <button type="submit">{{ t('view.buchung.form.speichern') }}</button>
-        <button type="button" @click="abbrechen">{{ t('view.buchung.form.abbrechen') }}</button>
-      </div>
-
-      <p v-if="standardStandort" class="hint">Standard-Standort: {{ standardStandort.name }}</p>
-    </form>
+        <p v-if="standardStandort" class="hint">Standard-Standort: {{ standardStandort.name }}</p>
+      </form>
+    </div>
   </section>
 </template>
 
 <style scoped>
-.view {
-  max-width: 640px;
-}
-.form {
+.row {
   display: grid;
-  gap: 0.75rem;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.85rem;
 }
-.form label {
-  display: grid;
-  gap: 0.25rem;
-}
-.actions {
-  display: flex;
-  gap: 0.5rem;
-}
-.fehler {
-  color: #b00020;
-}
-.warnung {
-  color: #b07500;
-}
-.hint {
-  color: #555;
-  font-size: 0.85rem;
+@media (max-width: 540px) {
+  .row {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

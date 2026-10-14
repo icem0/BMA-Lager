@@ -5,16 +5,18 @@ import { RouterLink } from 'vue-router'
 import { useArtikelStore } from '../stores/artikel'
 import { useStandortStore } from '../stores/standort'
 import { useBuchungStore } from '../stores/buchung'
+import { useArtikelTypen } from '../composables/useArtikelTypen'
+import type { ArtikelStatus } from '../db/types'
 
 const { t } = useI18n()
 const artikelStore = useArtikelStore()
 const standortStore = useStandortStore()
 const buchungStore = useBuchungStore()
+const { alleBenutzten } = useArtikelTypen()
 
-// Form-Felder für Suche + Filter
 const suche = ref('')
 const filterTyp = ref('')
-const filterStatus = ref<'alle' | 'verfuegbar' | 'reserviert' | 'gesperrt' | 'ausgesondert'>('alle')
+const filterStatus = ref<'alle' | ArtikelStatus>('alle')
 const nurAktive = ref(true)
 
 function applyFilter(): void {
@@ -28,7 +30,7 @@ function applyFilter(): void {
 
 const zeilen = computed(() => artikelStore.gefiltert)
 
-function bestandFuerStandard(artikelId: string, standortId: string): number {
+function bestandStandard(artikelId: string, standortId: string): number {
   return buchungStore.getBestand(artikelId, standortId)
 }
 
@@ -38,16 +40,24 @@ async function archivieren(id: string): Promise<void> {
   if (!confirm('Archivieren?')) return
   await artikelStore.archivieren(id)
 }
+
+const statusOptionen: { value: 'alle' | ArtikelStatus; labelKey: string }[] = [
+  { value: 'alle', labelKey: 'view.artikel.filter.statusAlle' },
+  { value: 'verfuegbar', labelKey: 'view.artikel.status.verfuegbar' },
+  { value: 'reserviert', labelKey: 'view.artikel.status.reserviert' },
+  { value: 'gesperrt', labelKey: 'view.artikel.status.gesperrt' },
+  { value: 'ausgesondert', labelKey: 'view.artikel.status.ausgesondert' },
+]
 </script>
 
 <template>
   <section class="view">
     <header class="view-head">
       <h1>{{ t('view.artikel.h1') }}</h1>
-      <RouterLink to="/artikel/neu" class="btn">{{ t('view.artikel.neu') }}</RouterLink>
+      <RouterLink to="/artikel/neu" class="btn primary">{{ t('view.artikel.neu') }}</RouterLink>
     </header>
 
-    <form class="filter" @submit.prevent="applyFilter">
+    <div class="filter-bar">
       <input
         v-model="suche"
         type="search"
@@ -56,22 +66,20 @@ async function archivieren(id: string): Promise<void> {
       />
       <select v-model="filterTyp" @change="applyFilter">
         <option value="">{{ t('view.artikel.filter.typ') }} —</option>
-        <option v-for="typ in artikelStore.typen" :key="typ" :value="typ">{{ typ }}</option>
+        <option v-for="typ in alleBenutzten" :key="typ" :value="typ">{{ typ }}</option>
       </select>
       <select v-model="filterStatus" @change="applyFilter">
-        <option value="alle">{{ t('view.artikel.filter.statusAlle') }}</option>
-        <option value="verfuegbar">{{ t('view.artikel.status.verfuegbar') }}</option>
-        <option value="reserviert">{{ t('view.artikel.status.reserviert') }}</option>
-        <option value="gesperrt">{{ t('view.artikel.status.gesperrt') }}</option>
-        <option value="ausgesondert">{{ t('view.artikel.status.ausgesondert') }}</option>
+        <option v-for="opt in statusOptionen" :key="opt.value" :value="opt.value">
+          {{ t(opt.labelKey) }}
+        </option>
       </select>
       <label class="check">
         <input v-model="nurAktive" type="checkbox" @change="applyFilter" />
         <span>{{ t('view.artikel.filter.nurAktive') }}</span>
       </label>
-    </form>
+    </div>
 
-    <p v-if="zeilen.length === 0" class="leer">{{ t('view.artikel.leer') }}</p>
+    <p v-if="zeilen.length === 0" class="empty-state">{{ t('view.artikel.leer') }}</p>
 
     <table v-else class="data">
       <thead>
@@ -79,7 +87,7 @@ async function archivieren(id: string): Promise<void> {
           <th>{{ t('view.artikel.spalten.titel') }}</th>
           <th>{{ t('view.artikel.spalten.typ') }}</th>
           <th>{{ t('view.artikel.spalten.status') }}</th>
-          <th v-if="standardStandort">
+          <th v-if="standardStandort" class="num">
             {{ t('view.artikel.spalten.bestand') }} ({{ standardStandort.name }})
           </th>
           <th></th>
@@ -88,21 +96,23 @@ async function archivieren(id: string): Promise<void> {
       <tbody>
         <tr v-for="a in zeilen" :key="a.id">
           <td>
-            <RouterLink :to="`/artikel/${a.id}`">{{ a.titel }}</RouterLink>
+            <RouterLink :to="`/artikel/${a.id}`" class="link">{{ a.titel }}</RouterLink>
           </td>
           <td>{{ a.typ }}</td>
           <td>
-            <span v-if="a.archiviert">[{{ t('view.artikel.detail.archiviert') }}]</span>
-            <span v-else>{{ t(`view.artikel.status.${a.status}`) }}</span>
+            <span v-if="a.archiviert" class="badge">
+              {{ t('view.artikel.detail.archiviert') }}
+            </span>
+            <span v-else class="badge">{{ t(`view.artikel.status.${a.status}`) }}</span>
           </td>
-          <td v-if="standardStandort">
-            {{ bestandFuerStandard(a.id, standardStandort.id) }}
+          <td v-if="standardStandort" class="num">
+            {{ bestandStandard(a.id, standardStandort.id) }}
           </td>
           <td class="actions-cell">
-            <RouterLink :to="`/buchung/neu?artikelId=${a.id}`">
+            <RouterLink :to="`/buchung/neu?artikelId=${a.id}`" class="btn">
               {{ t('view.artikel.detail.buchen') }}
             </RouterLink>
-            <button v-if="!a.archiviert" type="button" @click="archivieren(a.id)">
+            <button v-if="!a.archiviert" type="button" class="danger" @click="archivieren(a.id)">
               {{ t('view.artikel.detail.archivieren') }}
             </button>
           </td>
@@ -113,55 +123,23 @@ async function archivieren(id: string): Promise<void> {
 </template>
 
 <style scoped>
-.view {
-  max-width: 1100px;
+.data .num {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  font-weight: 600;
 }
-.view-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 1rem;
-  margin-bottom: 1rem;
+
+.link {
+  color: var(--text-strong);
+  font-weight: 500;
 }
-.btn {
-  background: #0b3d91;
-  color: white;
-  padding: 0.4rem 0.8rem;
-  border-radius: 4px;
+.link:hover {
+  color: var(--accent);
   text-decoration: none;
 }
-.filter {
-  display: flex;
-  gap: 0.75rem;
-  align-items: center;
-  margin-bottom: 1rem;
-  flex-wrap: wrap;
-}
-.filter input[type='search'] {
-  flex: 1;
-  min-width: 14rem;
-}
-.filter .check {
-  display: flex;
-  gap: 0.25rem;
-  align-items: center;
-}
-.data {
-  width: 100%;
-  border-collapse: collapse;
-}
-.data th,
-.data td {
-  padding: 0.5rem;
-  border-bottom: 1px solid #eee;
-  text-align: left;
-}
+
 .actions-cell {
-  display: flex;
-  gap: 0.5rem;
-  justify-content: flex-end;
-}
-.leer {
-  color: #666;
+  flex-wrap: wrap;
+  gap: 0.3rem;
 }
 </style>

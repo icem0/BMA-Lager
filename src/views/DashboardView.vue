@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { RouterLink } from 'vue-router'
 import { useArtikelStore } from '../stores/artikel'
 import { useBuchungStore } from '../stores/buchung'
 import { useStandortStore } from '../stores/standort'
@@ -21,43 +22,57 @@ const leer = computed(
 
 <template>
   <section class="view">
-    <h1>{{ t('view.dashboard.h1') }}</h1>
+    <header class="view-head">
+      <h1>{{ t('view.dashboard.h1') }}</h1>
+    </header>
 
-    <p v-if="leer">{{ t('view.dashboard.leer') }}</p>
+    <p v-if="leer" class="empty-state">{{ t('view.dashboard.leer') }}</p>
 
-    <ul v-else class="stats">
-      <li>
+    <div v-else class="card-grid">
+      <RouterLink to="/artikel" class="card stat-card">
         <strong>{{ artikelAnzahl }}</strong>
         <span>{{ t('app.nav.artikel') }}</span>
-      </li>
-      <li>
+      </RouterLink>
+      <RouterLink to="/standorte" class="card stat-card">
         <strong>{{ standortAnzahl }}</strong>
         <span>{{ t('app.nav.standorte') }}</span>
-      </li>
-      <li>
+      </RouterLink>
+      <RouterLink to="/buchungen" class="card stat-card">
         <strong>{{ buchungsAnzahl }}</strong>
         <span>{{ t('app.nav.buchungen') }}</span>
-      </li>
-    </ul>
+      </RouterLink>
+    </div>
   </section>
 </template>
 
 <style scoped>
-.stats {
-  display: flex;
-  gap: 1.5rem;
-  list-style: none;
-  padding: 0;
-}
-.stats li {
+.stat-card {
   display: flex;
   flex-direction: column;
-  padding: 1rem;
-  border: 1px solid #ddd;
-  border-radius: 6px;
-  min-width: 7rem;
+  gap: 0.4rem;
+  text-decoration: none;
+  color: var(--text-strong);
+  transition:
+    transform 0.15s,
+    border-color 0.15s;
 }
-.stats strong {
-  font-size: 1.8rem;
+
+.stat-card:hover {
+  text-decoration: none;
+  border-color: var(--accent-border);
+  transform: translateY(-1px);
+}
+
+.stat-card strong {
+  font-size: 2.25rem;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--accent);
+}
+
+.stat-card span {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  font-weight: 500;
 }
 </style>

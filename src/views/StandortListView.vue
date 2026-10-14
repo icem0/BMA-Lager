@@ -51,54 +51,60 @@ async function archivieren(id: string): Promise<void> {
   if (!confirm('Archivieren?')) return
   await standortStore.archivieren(id)
 }
+
+const typOptionen: StandortTyp[] = ['lager', 'auto', 'baustelle', 'extern']
 </script>
 
 <template>
   <section class="view">
     <header class="view-head">
       <h1>{{ t('view.standort.h1') }}</h1>
-      <button type="button" @click="formularOffen = !formularOffen">
+      <button type="button" class="primary" @click="formularOffen = !formularOffen">
         {{ formularOffen ? t('view.common.abbrechen') : t('view.standort.neu') }}
       </button>
     </header>
 
-    <form v-if="formularOffen" class="form" @submit.prevent="anlegen">
-      <label>
-        <span>{{ t('view.standort.form.name') }}</span>
-        <input v-model="formular.name" required autocomplete="off" />
-      </label>
-      <label>
-        <span>{{ t('view.standort.form.typ') }}</span>
-        <select v-model="formular.typ">
-          <option value="lager">{{ t('view.standort.typen.lager') }}</option>
-          <option value="auto">{{ t('view.standort.typen.auto') }}</option>
-          <option value="baustelle">{{ t('view.standort.typen.baustelle') }}</option>
-          <option value="extern">{{ t('view.standort.typen.extern') }}</option>
-        </select>
-      </label>
-      <label>
-        <span>{{ t('view.standort.form.projekt') }}</span>
-        <input v-model="formular.projekt" autocomplete="off" />
-      </label>
-      <label>
-        <span>{{ t('view.standort.form.kennzeichen') }}</span>
-        <input v-model="formular.kennzeichen" autocomplete="off" />
-      </label>
-      <label class="check">
-        <input v-model="formular.standard" type="checkbox" />
-        <span>{{ t('view.standort.form.standard') }}</span>
-      </label>
-      <div class="actions">
-        <button type="submit" :disabled="!formular.name.trim()">
-          {{ t('view.standort.form.speichern') }}
-        </button>
-        <button type="button" @click="((formularOffen = false), reset())">
-          {{ t('view.standort.form.abbrechen') }}
-        </button>
-      </div>
-    </form>
+    <div v-if="formularOffen" class="card">
+      <form class="form" @submit.prevent="anlegen">
+        <label>
+          <span>{{ t('view.standort.form.name') }}</span>
+          <input v-model="formular.name" required autocomplete="off" />
+        </label>
+        <label>
+          <span>{{ t('view.standort.form.typ') }}</span>
+          <select v-model="formular.typ">
+            <option v-for="opt in typOptionen" :key="opt" :value="opt">
+              {{ t(`view.standort.typen.${opt}`) }}
+            </option>
+          </select>
+        </label>
+        <div class="row">
+          <label>
+            <span>{{ t('view.standort.form.projekt') }}</span>
+            <input v-model="formular.projekt" autocomplete="off" />
+          </label>
+          <label>
+            <span>{{ t('view.standort.form.kennzeichen') }}</span>
+            <input v-model="formular.kennzeichen" autocomplete="off" />
+          </label>
+        </div>
+        <label class="check">
+          <input v-model="formular.standard" type="checkbox" />
+          <span>{{ t('view.standort.form.standard') }}</span>
+        </label>
 
-    <p v-if="standortStore.aktive.length === 0 && !formularOffen" class="leer">
+        <div class="form-actions">
+          <button type="submit" class="primary" :disabled="!formular.name.trim()">
+            {{ t('view.standort.form.speichern') }}
+          </button>
+          <button type="button" @click="((formularOffen = false), reset())">
+            {{ t('view.standort.form.abbrechen') }}
+          </button>
+        </div>
+      </form>
+    </div>
+
+    <p v-if="standortStore.aktive.length === 0 && !formularOffen" class="empty-state">
       {{ t('view.standort.leer') }}
     </p>
 
@@ -116,15 +122,20 @@ async function archivieren(id: string): Promise<void> {
       <tbody>
         <tr v-for="s in standortStore.aktive" :key="s.id">
           <td>{{ s.name }}</td>
-          <td>{{ t(`view.standort.typen.${s.typ}`) }}</td>
+          <td>
+            <span class="badge">{{ t(`view.standort.typen.${s.typ}`) }}</span>
+          </td>
           <td>{{ s.projekt ?? '—' }}</td>
           <td>{{ s.kennzeichen ?? '—' }}</td>
-          <td>{{ s.standard ? t('view.common.ja') : t('view.common.nein') }}</td>
+          <td>
+            <span v-if="s.standard" class="badge accent">{{ t('view.common.ja') }}</span>
+            <span v-else class="muted">{{ t('view.common.nein') }}</span>
+          </td>
           <td class="actions-cell">
             <button v-if="!s.standard" type="button" @click="setStandard(s.id)">
               {{ t('view.standort.spalten.standard') }}
             </button>
-            <button type="button" @click="archivieren(s.id)">
+            <button type="button" class="danger" @click="archivieren(s.id)">
               {{ t('view.artikel.detail.archivieren') }}
             </button>
           </td>
@@ -135,53 +146,14 @@ async function archivieren(id: string): Promise<void> {
 </template>
 
 <style scoped>
-.view {
-  max-width: 960px;
-}
-.view-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 1rem;
-  margin-bottom: 1rem;
-}
-.form {
+.row {
   display: grid;
-  gap: 0.75rem;
-  padding: 1rem;
-  border: 1px solid #ddd;
-  border-radius: 6px;
-  margin-bottom: 1rem;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.85rem;
 }
-.form label {
-  display: grid;
-  gap: 0.25rem;
-}
-.form label.check {
-  display: flex;
-  gap: 0.5rem;
-  align-items: center;
-}
-.actions {
-  display: flex;
-  gap: 0.5rem;
-}
-.data {
-  width: 100%;
-  border-collapse: collapse;
-}
-.data th,
-.data td {
-  padding: 0.5rem;
-  border-bottom: 1px solid #eee;
-  text-align: left;
-}
-.actions-cell {
-  display: flex;
-  gap: 0.25rem;
-  justify-content: flex-end;
-}
-.leer {
-  color: #666;
+@media (max-width: 540px) {
+  .row {
+    grid-template-columns: 1fr;
+  }
 }
 </style>
