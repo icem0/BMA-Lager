@@ -67,16 +67,18 @@ jobs:
       - name: Set package visibility to public
         if: github.event_name != 'pull_request'
         env:
-          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # GHCR_ADMIN_TOKEN: klassischer PAT mit scopes 'repo' + 'write:packages'.
+          # Der automatische GITHUB_TOKEN darf fuer User-Repos keine Packages flippen
+          # (gibt 404), darum Fallback auf Secret.
+          TOKEN: ${{ secrets.GHCR_ADMIN_TOKEN || secrets.GITHUB_TOKEN }}
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
         run: |
-          set +e
           for pkg in bma-lager-api; do
             for endpoint in \
-              "https://api.github.com/repos/${OWNER}/${REPO}/packages/container/${pkg}" \
+              "https://api.github.com/user/packages/container/${pkg}" \
               "https://api.github.com/users/${OWNER}/packages/container/${pkg}" \
-              "https://api.github.com/user/packages/container/${pkg}"; do
+              "https://api.github.com/repos/${OWNER}/${REPO}/packages/container/${pkg}"; do
               echo "::group::PATCH ${endpoint}"
               status=$(curl -sS -o /tmp/resp.json -w "%{http_code}" \
                 -X PATCH \
@@ -90,9 +92,11 @@ jobs:
               echo "::endgroup::"
               if [ "${status}" = "200" ]; then
                 echo "visibility set to public via ${endpoint}"
-                break
+                exit 0
               fi
             done
+            echo "::error::could not flip visibility for ${pkg} -- GHCR_ADMIN_TOKEN als Secret anlegen (PAT mit scopes repo + write:packages)"
+            exit 1
           done
 
   # ---------- PWA ----------
@@ -152,11 +156,13 @@ jobs:
       - name: Set package visibility to public
         if: github.event_name != 'pull_request'
         env:
-          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # GHCR_ADMIN_TOKEN: klassischer PAT mit scopes 'repo' + 'write:packages'.
+          # Der automatische GITHUB_TOKEN darf fuer User-Repos keine Packages flippen
+          # (gibt 404), darum Fallback auf Secret.
+          TOKEN: ${{ secrets.GHCR_ADMIN_TOKEN || secrets.GITHUB_TOKEN }}
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
         run: |
-          set +e
           for pkg in bma-lager-pwa; do
             for endpoint in \
               "https://api.github.com/repos/${OWNER}/${REPO}/packages/container/${pkg}" \
@@ -175,7 +181,9 @@ jobs:
               echo "::endgroup::"
               if [ "${status}" = "200" ]; then
                 echo "visibility set to public via ${endpoint}"
-                break
+                exit 0
               fi
             done
+            echo "::error::could not flip visibility for ${pkg} -- GHCR_ADMIN_TOKEN als Secret anlegen (PAT mit scopes repo + write:packages)"
+            exit 1
           done
