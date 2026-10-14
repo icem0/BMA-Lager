@@ -54,4 +54,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD node -e "require('http').get('http://localhost:3000/api/healthz', (r) => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"
 
 ENTRYPOINT ["dumb-init", "--"]
-CMD ["node", "dist/index.js"]
+# Migrationen vor jedem Server-Start ausfuehren (idempotent: bereits
+# angewendete SQL-Dateien werden uebersprungen). Im Image verankert, damit
+# es auch ohne angepasstes docker-compose.yml auf dem Deployer funktioniert.
+CMD ["sh", "-c", "node dist/db/migrate.js && exec node dist/index.js"]
