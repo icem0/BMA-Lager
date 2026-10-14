@@ -12,16 +12,27 @@ const buchungStore = useBuchungStore()
 const artikelStore = useArtikelStore()
 const standortStore = useStandortStore()
 
-const nurAktive = ref(true)
 const artikelFilter = ref<string>('')
 
-const zeilen = computed<Buchung[]>(() =>
-  buchungStore.buchungen.filter((b) => {
-    if (nurAktive.value && b.storno) return false
+function istStorniert(b: Buchung): boolean {
+  return b.storno || b.typ === 'storno'
+}
+
+function statusLabel(b: Buchung): string {
+  if (b.typ === 'storno') return t('view.buchung.status.storno')
+  if (b.storno) return t('view.buchung.status.storniert')
+  return t('view.buchung.status.aktiv')
+}
+
+const zeilen = computed<Buchung[]>(() => {
+  const gefiltert = buchungStore.buchungen.filter((b) => {
     if (artikelFilter.value && b.artikelId !== artikelFilter.value) return false
     return true
-  }),
-)
+  })
+  return gefiltert.slice().sort(
+    (a, b) => new Date(b.erstelltAm).getTime() - new Date(a.erstelltAm).getTime(),
+  )
+})
 
 function nameArtikel(id: string): string {
   return artikelStore.byId(id)?.titel ?? '—'
@@ -41,8 +52,15 @@ function formatDatum(iso: string): string {
   return new Date(iso).toLocaleString()
 }
 
+function formatDatumKurz(iso: string): string {
+  const d = new Date(iso)
+  return d.toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' })
+    + ' '
+    + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+}
+
 async function stornieren(b: Buchung): Promise<void> {
-  if (b.storno) return
+  if (istStorniert(b)) return
   if (!confirm('Stornieren?')) return
   await buchungStore.mu.stornieren({
     buchungId: b.id,
@@ -64,10 +82,6 @@ async function stornieren(b: Buchung): Promise<void> {
         <option value="">— Alle Artikel —</option>
         <option v-for="a in artikelStore.artikel" :key="a.id" :value="a.id">{{ a.titel }}</option>
       </select>
-      <label class="check">
-        <input v-model="nurAktive" type="checkbox" />
-        <span>nur aktive</span>
-      </label>
     </div>
 
     <p v-if="zeilen.length === 0" class="empty-state">{{ t('view.buchung.leer') }}</p>
@@ -82,11 +96,12 @@ async function stornieren(b: Buchung): Promise<void> {
           <th class="num">{{ t('view.buchung.spalten.menge') }}</th>
           <th>{{ t('view.buchung.spalten.projekt') }}</th>
           <th>{{ t('view.buchung.spalten.von') }}</th>
+          <th>{{ t('view.buchung.spalten.status') }}</th>
           <th></th>
         </tr>
       </thead>
       <tbody>
-        <tr v-for="b in zeilen" :key="b.id" :class="{ storno: b.storno }">
+        <tr v-for="b in zeilen" :key="b.id" :class="{ storno: istStorniert(b) }">
           <td>{{ formatDatum(b.erstelltAm) }}</td>
           <td>{{ nameArtikel(b.artikelId) }}</td>
           <td>{{ nameStandort(b.standortId) }}</td>
@@ -98,9 +113,14 @@ async function stornieren(b: Buchung): Promise<void> {
           </td>
           <td>{{ b.projekt ?? '—' }}</td>
           <td>{{ b.erstelltVon }}</td>
+          <td>
+            <span class="status-badge" :class="istStorniert(b) ? 'status-storno' : 'status-aktiv'">
+              {{ statusLabel(b) }}
+            </span>
+          </td>
           <td class="actions-cell">
             <button
-              v-if="!b.storno && b.typ !== 'storno' && b.typ !== 'kommission'"
+              v-if="!istStorniert(b) && b.typ !== 'kommission'"
               type="button"
               class="danger"
               @click="stornieren(b)"
@@ -114,6 +134,45 @@ async function stornieren(b: Buchung): Promise<void> {
         </tr>
       </tbody>
     </table>
+
+    <ul v-if="zeilen.length > 0" class="card-list mobile-only" role="list">
+      <li v-for="b in zeilen" :key="b.id" class="card-list-item" :class="{ storno: istStorniert(b) }">
+        <div class="card-list-title-row">
+          <span class="card-list-title">{{ nameArtikel(b.artikelId) }}</span>
+          <span
+            class="num"
+            :class="b.menge > 0 ? 'num-plus' : b.menge < 0 ? 'num-minus' : ''"
+          >
+            {{ b.menge > 0 ? '+' : '' }}{{ b.menge }}
+          </span>
+        </div>
+        <div class="card-list-meta">
+          <span class="badge">{{ formatTyp(b.typ) }}</span>
+          <span
+            class="status-badge"
+            :class="istStorniert(b) ? 'status-storno' : 'status-aktiv'"
+          >
+            {{ statusLabel(b) }}
+          </span>
+          <span class="muted">{{ nameStandort(b.standortId) }}</span>
+          <span class="muted">{{ formatDatumKurz(b.erstelltAm) }}</span>
+          <span v-if="b.projekt" class="muted">{{ b.projekt }}</span>
+        </div>
+        <div class="card-list-actions">
+          <button
+            v-if="!istStorniert(b) && b.typ !== 'kommission'"
+            type="button"
+            class="danger"
+            @click="stornieren(b)"
+          >
+            Storno
+          </button>
+          <RouterLink v-if="b.typ === 'kommission'" :to="`/kommission/${b.id}`" class="btn">
+            Kommission
+          </RouterLink>
+        </div>
+      </li>
+    </ul>
   </section>
 </template>
 
@@ -122,5 +181,60 @@ async function stornieren(b: Buchung): Promise<void> {
   font-variant-numeric: tabular-nums;
   text-align: right;
   font-weight: 600;
+}
+.data .num-plus {
+  color: var(--accent, #0a7a2a);
+}
+.data .num-minus {
+  color: var(--danger, #b53030);
+}
+.data .storno td {
+  color: var(--text-muted, #888);
+}
+.data .storno td.num-plus,
+.data .storno td.num-minus {
+  color: var(--text-muted, #888);
+}
+
+.card-list-title-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.card-list-item .num {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  font-size: 1.1rem;
+  color: var(--text-strong);
+}
+.card-list-item .num-plus {
+  color: var(--accent, #0a7a2a);
+}
+.card-list-item .num-minus {
+  color: var(--danger, #b53030);
+}
+.card-list-item.storno .card-list-title,
+.card-list-item.storno .num {
+  text-decoration: line-through;
+  color: var(--text-muted, #888);
+}
+
+.status-badge {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border-radius: 0.4rem;
+  font-size: 0.85em;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.status-aktiv {
+  background: rgba(10, 122, 42, 0.12);
+  color: var(--accent, #0a7a2a);
+}
+.status-storno {
+  background: rgba(181, 48, 48, 0.12);
+  color: var(--danger, #b53030);
 }
 </style>
