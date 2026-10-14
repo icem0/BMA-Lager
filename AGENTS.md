@@ -14,6 +14,15 @@ Regeln für alle Coding-Agents und Entwickler, die an diesem Projekt arbeiten.
 - Jede Buchung hat eine **UUID** (kein auto-increment, keine laufende Nummer) und einen Zeitstempel.
 - Buchungen sind unveränderlich. Korrekturen erfolgen durch Storno- oder Gegenbuchungen.
 
+## Build-Metadaten in der PWA
+
+`scripts/write-version.mjs` läuft vor jedem Build und schreibt `src/version.ts`
+(Version aus `package.json`, Commit/Branch/Build-Datum). Im PWA-Buildx gibt es
+kein `.git/`, also fallen Commit/Branch sonst auf `unbekannt` zurück. Das CI
+reicht deshalb `GIT_COMMIT` (`github.sha`) und `GIT_BRANCH` (`github.ref_name`)
+als Build-Args an `Dockerfile.pwa` durch — `write-version.mjs` liest sie aus
+der ENV und nutzt sie mit Fallback auf `git rev-parse` (lokal).
+
 ## Code-Qualität
 
 - **TypeScript** – kein ungetypter Code in neu geschriebenen Dateien.

@@ -150,6 +150,11 @@ jobs:
           tags: |
             ghcr.io/${{ github.repository_owner }}/bma-lager-pwa:latest
             ghcr.io/${{ github.repository_owner }}/bma-lager-pwa:${{ github.sha }}
+          # Commit/Branch als Build-Args durchreichen, damit version.ts im
+          # Image die echten Werte hat (docker buildx hat kein .git/).
+          build-args: |
+            GIT_COMMIT=${{ github.sha }}
+            GIT_BRANCH=${{ github.ref_name }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

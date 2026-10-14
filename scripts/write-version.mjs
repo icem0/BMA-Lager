@@ -37,9 +37,21 @@ function gitOrNull(args) {
 }
 
 const version = readPackageVersion()
-const commitRaw = gitOrNull('rev-parse --short HEAD') ?? ''
-const commit = commitRaw.replace(/[^a-f0-9]/gi, '') || 'unbekannt'
-const branch = gitOrNull('rev-parse --abbrev-ref HEAD') ?? 'unbekannt'
+
+// Commit/Branch können in zwei Quellen kommen:
+//   1. ENV GIT_COMMIT / GIT_BRANCH — vom Dockerfile oder CI als Build-Arg gesetzt
+//      (docker buildx hat kein .git/, also fallen wir sonst auf 'unbekannt' zurück)
+//   2. git rev-parse — funktioniert lokal und in CI-Workern, die mit actions/checkout
+//      einen echten .git/-Ordner haben
+const commitFromEnv = (process.env.GIT_COMMIT ?? '').replace(/[^a-f0-9]/gi, '').slice(0, 7)
+const branchFromEnv = (process.env.GIT_BRANCH ?? '').replace(/[^a-zA-Z0-9._/-]/g, '')
+
+const commitFromGit = gitOrNull('rev-parse --short HEAD') ?? ''
+const branchFromGit = gitOrNull('rev-parse --abbrev-ref HEAD') ?? ''
+
+const commit = commitFromEnv || (commitFromGit.replace(/[^a-f0-9]/gi, '')) || 'unbekannt'
+const branch = branchFromEnv || branchFromGit || 'unbekannt'
+
 const buildDate = new Date().toISOString()
 
 const out = `// AUTO-GENERATED durch scripts/write-version.mjs.
