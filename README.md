@@ -175,15 +175,17 @@ Die Container `bma-lager-api` (Port 3000) und `bma-lager-pwa` (Port 8080) werden
 
 ```bash
 # 1) Repo klonen
-git clone https://github.com/DEIN-USER/bma-lager.git /opt/bma-lager
+git clone https://github.com/icem0/bma-lager.git /opt/bma-lager
 cd /opt/bma-lager
 
 # 2) .env ausfüllen
 cp .env.example .env
-$EDITOR .env  # GHCR-Owner, DB-Password, JWT-Secret, Admin-Daten, Domain-Configs
+$EDITOR .env  # DB-Password, JWT-Secret, Admin-Daten, Domain-Configs
 
-# 3) GHCR-Login (einmalig)
-echo "$GHCR_TOKEN" | docker login ghcr.io -u DEIN-USER --password-stdin
+# 3) GHCR-Login — meist nicht nötig, da die Images vom offiziellen
+#    ghcr.io/icem0/bma-lager-Mirror öffentlich sind.
+#    Nur wenn du ein eigenes Image-Repo nutzt (BMA_IMAGE_REPO=...):
+# echo "$GHCR_TOKEN" | docker login ghcr.io -u DEIN-USER --password-stdin
 
 # 4) Initial: Migration + Bootstrap-Admin
 docker compose --profile migrate up
@@ -192,7 +194,7 @@ docker compose --profile bootstrap up
 # 5) Stack hochfahren
 docker compose up -d
 
-# 6) Update-Workflow nach jedem deiner Commits
+# 6) Update-Workflow nach jedem neuen Release
 cd /opt/bma-lager
 git pull origin main
 docker compose pull
