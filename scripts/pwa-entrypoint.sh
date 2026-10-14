@@ -23,4 +23,14 @@ cat > /usr/share/nginx/html/config.js <<EOF
 window.__BMA_API_URL__ = "${escaped}";
 EOF
 
+# Hinweis: VITE_API_URL ist die Origin-Basis. Die App haengt '/api/...'
+# selbst an. Ein trailing '/api' fuehrt sonst zu '/api/api/...' und 404.
+# src/auth/api.ts entfernt ein trailing '/api' automatisch, aber sauberer
+# ist die Origin-Basis ohne '/api'-Suffix.
+case "$escaped" in
+  */api)
+    printf '[pwa-entrypoint] WARN: VITE_API_URL ends with /api — auto-trimmed at runtime. Set the origin instead (e.g. https://example.com).\n' >&2
+    ;;
+esac
+
 exec "$@"

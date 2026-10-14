@@ -20,13 +20,27 @@
 
 const LS_API_URL = 'bma.api.url'
 
+/**
+ * Normalisiert eine Basis-URL: entfernt genau ein trailing `/api`, falls
+ * vorhanden. Häufiger Konfig-Fehler: User setzt
+ * `VITE_API_URL=https://example.com/api`, weil dort die API exponiert
+ * wird. Unsere App hängt `/api/...` aber selbst an die Basis an, also
+ * wäre die finale URL sonst `/api/api/auth/login`. Sub-Pfade wie
+ * `/api/v1` werden NICHT angetastet (sie enden nicht exakt auf `/api`).
+ */
+function normalizeBaseUrl(base: string): string {
+  const trimmed = base.replace(/\/+$/, '')
+  if (trimmed.endsWith('/api')) return trimmed.slice(0, -4)
+  return trimmed
+}
+
 export function getApiBaseUrl(): string {
   const fromWindow = (globalThis as { __BMA_API_URL__?: string }).__BMA_API_URL__
-  if (typeof fromWindow === 'string') return fromWindow
+  if (typeof fromWindow === 'string') return normalizeBaseUrl(fromWindow)
   const stored = localStorage.getItem(LS_API_URL)
-  if (stored) return stored
+  if (stored) return normalizeBaseUrl(stored)
   const fromBuild = import.meta.env.VITE_API_URL
-  if (typeof fromBuild === 'string' && fromBuild.length > 0) return fromBuild
+  if (typeof fromBuild === 'string' && fromBuild.length > 0) return normalizeBaseUrl(fromBuild)
   return ''
 }
 
