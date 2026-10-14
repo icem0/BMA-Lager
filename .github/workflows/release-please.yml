@@ -17,6 +17,7 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           config-file: .release-please-config.json
-          # Kein manifest-file: das Repo ist ein einzelnes Package (PWA-Root
-          # package.json). manifest-file ist nur fuer Monorepos gedacht und
-          # loest hier sonst 'versionString.match is not a function' aus.
+          # release-please v17+ ist im Manifest-Mode Default, sobald die Config
+          # `packages` enthaelt. Wir sind ein einzelnes Package (Root-PWA), das
+          # Manifest im Root (.release-please-manifest.json) reicht daher.
+          # manifest-file explizit setzen ist optional, aber dokumentiert.

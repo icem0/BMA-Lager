@@ -42,8 +42,11 @@ der ENV und nutzt sie mit Fallback auf `git rev-parse` (lokal).
 - **release-please** (`.github/workflows/release-please.yml`) öffnet bei
   jedem Push auf `main` einen Release-PR, der `package.json` + `CHANGELOG.md`
   bumpt und das passende `vX.Y.Z`-Tag erzeugt. Konfig in
-  `.release-please-config.json` (Single-Package-Repo — `manifest-file` ist
-  nicht gesetzt, sonst crash mit `versionString.match is not a function`).
+  `.release-please-config.json` (Single-Package-Repo). Manifest-Datei
+  `.release-please-manifest.json` führt die aktuelle Version (`".": "x.y.z"`).
+  - Seit release-please v17 ist Manifest-Mode der Default, sobald die Config
+    `packages` enthält — die Datei muss im Repo liegen, sonst Crash mit
+    `Missing required manifest versions`.
   - Vor `1.0.0`: `feat` → minor, `fix` → patch (`bump-minor-pre-major`).
   - Ab `1.0.0`: Semver strikt (`feat` → minor, `fix` → patch, Breaking → major).
 - **`build-and-push.yml`** baut das PWA- und API-Image bei Push auf `main`
