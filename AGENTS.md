@@ -29,8 +29,8 @@ Regeln für alle Coding-Agents und Entwickler, die an diesem Projekt arbeiten.
 
 ## Build & Deployment
 
-- **Images kommen aus GHCR.** `docker-compose.yml` referenziert `api`, `pwa`, `migrate` und `bootstrap` hartkodiert als `ghcr.io/icem0/bma-lager-{api,pwa}:latest`. **Kein** `build:`-Block, **kein** Variablen-Override. Deployer ziehen die Images — fertig.
-- **`migrate` und `bootstrap`** sind Entry-Points desselben API-Images (`node dist/db/migrate.js` / `node dist/cli/bootstrap-admin.js`). Es wird also nicht für jeden Job ein eigenes Image gebaut.
+- **Images kommen aus GHCR.** `docker-compose.yml` referenziert `api`, `pwa` und `migrate` hartkodiert als `ghcr.io/icem0/bma-lager-{api,pwa}:latest`. **Kein** `build:`-Block, **kein** Variablen-Override. Deployer ziehen die Images — fertig.
+- **`migrate`** ist ein Entry-Point des API-Images (`node dist/db/migrate.js`). Es wird also nicht für jeden Job ein eigenes Image gebaut. Den allerersten Admin legt die PWA selbst an, sobald `/api/auth/setup-status` meldet, dass die `users`-Tabelle leer ist.
 - **CI-Workflow** `.github/workflows/build-and-push.yml` baut bei Push auf `main` (oder Tag `v*`) die Images und pusht sie mit Tag `:latest` **und** mit dem SHA-Tag. Bei Pull-Requests wird **nur** gebaut, nicht gepusht (Gate `if: github.event_name != 'pull_request'`). Sichtbarkeit wird per `PATCH /user/packages/container/{pkg}` auf `public` gesetzt.
 - **GHCR-Token**: Für private Pakete braucht der Deployer einen GitHub-PAT mit Scope `read:packages`. Bare Docker / Coolify: `docker login ghcr.io`. Arcane: einmalig `POST /container-registries` mit dem PAT. Für öffentliche Pakete reicht kein Token.
 - **Arcane / Coolify / bare Docker** funktionieren ohne Anpassung — sie alle ziehen `image:`-Referenzen transparent. Der frühere `build:`-Pfad ist absichtlich entfernt.

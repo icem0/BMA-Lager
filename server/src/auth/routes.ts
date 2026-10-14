@@ -76,6 +76,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       user: {
         id: user.id,
         email: user.email,
+        anzeigename: user.anzeigename,
         rolle: user.rolle,
         mustChangePassword: user.mustChangePassword,
       },
@@ -148,6 +149,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       return reply.send({
         id: user.id,
         email: user.email,
+        anzeigename: user.anzeigename,
         rolle: user.rolle,
         mustChangePassword: user.mustChangePassword,
       })

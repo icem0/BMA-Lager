@@ -95,12 +95,12 @@ docker run -d --name bma-pg \
 # 2) Backend
 cd server
 cp .env.example .env
-# .env anpassen (DATABASE_URL, JWT_SECRET, ADMIN_*)
+# .env anpassen (DATABASE_URL, JWT_SECRET)
 npm install
 npm run db:migrate
-npm run bootstrap-admin
 npm run dev
 # → http://localhost:4242
+# Beim ersten Aufruf der Login-Seite wird der Admin-User per Setup-Formular angelegt.
 
 # 3) Frontend
 cd ..
@@ -174,7 +174,7 @@ Jede Buchung hat eine unveränderliche `id` (UUID) und `erstelltAm`-Zeitstempel.
 
 Die Container `bma-lager-api` (Port 4242) und `bma-lager-pwa` (Port 4280) werden **direkt am Host exponiert**. Wenn du TLS, eine Domain oder eine Firewall brauchst, kümmerst du dich **extern** darum — z. B. mit einem nginx, Caddy, Traefik, HAProxy, oder einem Cloud-Loadbalancer, der auf 4242/4280 proxied. In diesem Repo wird kein Reverse-Proxy mitgeliefert.
 
-**Default-Workflow: clone + `.env` + `docker compose up -d` reicht.** Die Images werden direkt von GitHub Container Registry bezogen — `docker-compose.yml` referenziert sie hartkodiert als `ghcr.io/icem0/bma-lager-api:latest` bzw. `…-pwa:latest` (für `migrate`/`bootstrap` wird dasselbe API-Image mit anderem Entrypoint verwendet). Der CI-Workflow [`.github/workflows/build-and-push.yml`](./.github/workflows/build-and-push.yml) baut und pusht diese Tags bei jedem Merge auf `main`.
+**Default-Workflow: clone + `.env` + `docker compose up -d` reicht.** Die Images werden direkt von GitHub Container Registry bezogen — `docker-compose.yml` referenziert sie hartkodiert als `ghcr.io/icem0/bma-lager-api:latest` bzw. `…-pwa:latest` (für `migrate` wird dasselbe API-Image mit anderem Entrypoint verwendet). Der CI-Workflow [`.github/workflows/build-and-push.yml`](./.github/workflows/build-and-push.yml) baut und pusht diese Tags bei jedem Merge auf `main`.
 
 ```bash
 # 1) Repo klonen
@@ -183,16 +183,17 @@ cd /opt/bma-lager
 
 # 2) .env ausfüllen
 cp .env.example .env
-$EDITOR .env  # DB-Password, JWT-Secret, Admin-Daten, Domain-Configs
+$EDITOR .env  # DB-Password, JWT-Secret, Domain-Configs
 
-# 3) Initial: Migration + Bootstrap-Admin
+# 3) Initial: Migration
 docker compose --profile migrate up
-docker compose --profile bootstrap up
 
 # 4) Stack hochfahren (zieht Images von GHCR, startet den Stack)
 docker compose up -d
 
-# 5) Update-Workflow nach jedem neuen Release
+# 5) Im Browser /login aufrufen — der erste Admin wird per Setup-Formular angelegt.
+
+# 6) Update-Workflow nach jedem neuen Release
 cd /opt/bma-lager
 git pull origin main
 docker compose pull && docker compose up -d   # zieht neue :latest-Tags, startet neu
@@ -346,8 +347,7 @@ bma-lager/
 │   └── views/                # Page-Components
 ├── server/                   # Backend (Fastify + Drizzle)
 │   ├── src/
-│   │   ├── auth/             # JWT, Cookies, Rate-Limit, Routes, Middleware
-│   │   ├── cli/              # bootstrap-admin
+│   │   ├── auth/             # JWT, Cookies, Rate-Limit, Routes, Middleware, Setup
 │   │   ├── config/           # ENV-Validierung (zod)
 │   │   ├── db/               # Drizzle-Schema, Migrationen, Client
 │   │   ├── domain/           # Errors, Bestandsformel, Validierung

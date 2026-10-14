@@ -126,6 +126,16 @@ export const patchUserSchema = z.object({
   password: z.string().min(8).optional(),
 })
 
+/**
+ * Initial-Setup: legt den allerersten User an. Darf nur aufgerufen werden,
+ * solange noch kein User in der DB existiert — der Server prüft das.
+ */
+export const setupSchema = z.object({
+  anzeigename: z.string().min(1, 'Anzeigename ist erforderlich').max(120),
+  email: z.string().email(),
+  passwort: z.string().min(8, 'Passwort muss mindestens 8 Zeichen haben'),
+})
+
 // ---------- Snapshot-Query ----------
 
 export const snapshotQuerySchema = z.object({

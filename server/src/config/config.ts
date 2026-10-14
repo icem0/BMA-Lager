@@ -22,10 +22,6 @@ const schema = z.object({
     .default('false'),
   COOKIE_DOMAIN: z.string().default('localhost'),
 
-  // Bootstrap
-  ADMIN_EMAIL: z.string().email(),
-  ADMIN_PASSWORD: z.string().min(8),
-
   // CORS
   CORS_ORIGIN: z.string().url().default('http://localhost:5173'),
 

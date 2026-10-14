@@ -9,6 +9,7 @@ import { apiFetch } from './api.js'
 export interface UserDto {
   id: string
   email: string
+  anzeigename?: string
   rolle: 'admin' | 'user'
   aktiv: boolean
   erstelltAm: string
@@ -20,9 +21,32 @@ export interface LoginAntwort {
   user: {
     id: string
     email: string
+    anzeigename?: string
     rolle: 'admin' | 'user'
     mustChangePassword: boolean
   }
+}
+
+export interface SetupStatus {
+  setupRequired: boolean
+  userCount: number
+}
+
+export interface SetupEingabe {
+  anzeigename: string
+  email: string
+  passwort: string
+}
+
+export async function holeSetupStatus(): Promise<SetupStatus> {
+  return apiFetch<SetupStatus>('/api/auth/setup-status')
+}
+
+export async function fuehreSetupDurch(eingabe: SetupEingabe): Promise<UserDto> {
+  return apiFetch<UserDto>('/api/auth/setup', {
+    method: 'POST',
+    body: eingabe,
+  })
 }
 
 export async function holeAktiveUserliste(): Promise<UserDto[]> {

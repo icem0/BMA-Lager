@@ -32,6 +32,7 @@ export const users = pgTable(
     erstelltAm: timestamp('erstellt_am', { withTimezone: true }).notNull(),
     letzterLoginAm: timestamp('letzter_login_am', { withTimezone: true }),
     mustChangePassword: boolean('must_change_password').notNull().default(false),
+    anzeigename: text('anzeigename').notNull().default(''),
   },
   (t) => [uniqueIndex('users_email_lower_idx').on(t.email)],
 )

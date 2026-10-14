@@ -1,16 +1,47 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { version, commit, branch, buildDate } from '../version'
+import { fuehreSetupDurch, holeSetupStatus, type SetupStatus } from '../auth/users'
+import { ApiError } from '../auth/api'
 
 const router = useRouter()
 const auth = useAuthStore()
 
+type Modus = 'laden' | 'setup' | 'login'
+
+const modus = ref<Modus>('laden')
+
+// --- Login-Felder ---
 const email = ref('')
 const passwort = ref('')
 const fehler = ref('')
 const laufend = ref(false)
+
+// --- Setup-Felder ---
+const setupAnzeigename = ref('')
+const setupEmail = ref('')
+const setupPasswort = ref('')
+const setupPasswortBestaetigen = ref('')
+const setupFehler = ref('')
+const setupLaufend = ref(false)
+
+async function ladeSetupStatus(): Promise<void> {
+  modus.value = 'laden'
+  try {
+    const status: SetupStatus = await holeSetupStatus()
+    modus.value = status.setupRequired ? 'setup' : 'login'
+  } catch (e) {
+    // Server nicht erreichbar o. ä. — Login anbieten, Fehler dem User zeigen.
+    modus.value = 'login'
+    fehler.value = e instanceof Error ? e.message : String(e)
+  }
+}
+
+onMounted(() => {
+  void ladeSetupStatus()
+})
 
 async function anmelden(): Promise<void> {
   fehler.value = ''
@@ -30,6 +61,50 @@ async function anmelden(): Promise<void> {
     fehler.value = e instanceof Error ? e.message : String(e)
   } finally {
     laufend.value = false
+  }
+}
+
+async function setupAbschliessen(): Promise<void> {
+  setupFehler.value = ''
+
+  if (!setupAnzeigename.value.trim()) {
+    setupFehler.value = 'Bitte einen Anzeigenamen eingeben.'
+    return
+  }
+  if (!setupEmail.value.trim()) {
+    setupFehler.value = 'Bitte eine E-Mail eingeben.'
+    return
+  }
+  if (setupPasswort.value.length < 8) {
+    setupFehler.value = 'Passwort muss mindestens 8 Zeichen haben.'
+    return
+  }
+  if (setupPasswort.value !== setupPasswortBestaetigen.value) {
+    setupFehler.value = 'Passwörter stimmen nicht überein.'
+    return
+  }
+
+  setupLaufend.value = true
+  try {
+    await fuehreSetupDurch({
+      anzeigename: setupAnzeigename.value.trim(),
+      email: setupEmail.value.trim(),
+      passwort: setupPasswort.value,
+    })
+    // Server hat den User angelegt — jetzt regulär einloggen.
+    await auth.anmelden(setupEmail.value.trim(), setupPasswort.value, { offlineFallback: false })
+    void router.push('/')
+  } catch (e) {
+    if (e instanceof ApiError && e.code === 'SETUP_DONE') {
+      // In der Zwischenzeit hat jemand anderes den Setup gemacht.
+      setupFehler.value = 'Setup ist bereits abgeschlossen. Bitte anmelden.'
+      modus.value = 'login'
+      email.value = setupEmail.value.trim()
+      return
+    }
+    setupFehler.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    setupLaufend.value = false
   }
 }
 
@@ -55,43 +130,115 @@ function closeVersion(): void {
         <img src="/bma-lager-logo.png" alt="" width="48" height="48" />
         <h1>BMA-Lager</h1>
       </div>
-      <p class="hint">Bitte mit E-Mail und Passwort anmelden.</p>
 
-      <form class="form" @submit.prevent="anmelden">
-        <label>
-          <span>E-Mail</span>
-          <input
-            v-model="email"
-            name="email"
-            type="email"
-            autocomplete="email"
-            inputmode="email"
-            required
-            autofocus
-          />
-        </label>
-        <label>
-          <span>Passwort</span>
-          <input
-            v-model="passwort"
-            name="password"
-            type="password"
-            autocomplete="current-password"
-            required
-          />
-        </label>
-        <p v-if="fehler" class="fehler">{{ fehler }}</p>
+      <!-- Lade-Zustand -->
+      <template v-if="modus === 'laden'">
+        <p class="hint">Wird geladen …</p>
+      </template>
 
-        <div class="form-actions">
-          <button type="submit" class="primary" :disabled="laufend">
-            {{ laufend ? 'Anmelden …' : 'Anmelden' }}
-          </button>
-        </div>
-      </form>
+      <!-- Setup-Formular: erster User -->
+      <template v-else-if="modus === 'setup'">
+        <p class="hint">
+          Noch kein Benutzer vorhanden. Lege den ersten Account an, danach läuft der
+          Login normal.
+        </p>
 
-      <p class="hint">
-        <a href="javascript:void(0)" @click="zeigeInfo">Passwort vergessen?</a>
-      </p>
+        <form class="form" @submit.prevent="setupAbschliessen">
+          <label>
+            <span>Anzeigename</span>
+            <input
+              v-model="setupAnzeigename"
+              name="anzeigename"
+              type="text"
+              autocomplete="name"
+              maxlength="120"
+              required
+              autofocus
+            />
+          </label>
+          <label>
+            <span>E-Mail (Login)</span>
+            <input
+              v-model="setupEmail"
+              name="email"
+              type="email"
+              autocomplete="email"
+              inputmode="email"
+              required
+            />
+          </label>
+          <label>
+            <span>Passwort</span>
+            <input
+              v-model="setupPasswort"
+              name="password"
+              type="password"
+              autocomplete="new-password"
+              minlength="8"
+              required
+            />
+          </label>
+          <label>
+            <span>Passwort bestätigen</span>
+            <input
+              v-model="setupPasswortBestaetigen"
+              name="password-confirm"
+              type="password"
+              autocomplete="new-password"
+              minlength="8"
+              required
+            />
+          </label>
+          <p v-if="setupFehler" class="fehler">{{ setupFehler }}</p>
+
+          <div class="form-actions">
+            <button type="submit" class="primary" :disabled="setupLaufend">
+              {{ setupLaufend ? 'Wird angelegt …' : 'Account anlegen' }}
+            </button>
+          </div>
+        </form>
+      </template>
+
+      <!-- Login-Formular -->
+      <template v-else>
+        <p class="hint">Bitte mit E-Mail und Passwort anmelden.</p>
+
+        <form class="form" @submit.prevent="anmelden">
+          <label>
+            <span>E-Mail</span>
+            <input
+              v-model="email"
+              name="email"
+              type="email"
+              autocomplete="email"
+              inputmode="email"
+              required
+              autofocus
+            />
+          </label>
+          <label>
+            <span>Passwort</span>
+            <input
+              v-model="passwort"
+              name="password"
+              type="password"
+              autocomplete="current-password"
+              required
+            />
+          </label>
+          <p v-if="fehler" class="fehler">{{ fehler }}</p>
+
+          <div class="form-actions">
+            <button type="submit" class="primary" :disabled="laufend">
+              {{ laufend ? 'Anmelden …' : 'Anmelden' }}
+            </button>
+          </div>
+        </form>
+
+        <p class="hint">
+          <a href="javascript:void(0)" @click="zeigeInfo">Passwort vergessen?</a>
+        </p>
+      </template>
     </div>
 
     <button

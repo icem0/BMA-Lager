@@ -7,11 +7,14 @@ Fastify-Backend für die bma-lager PWA.
 ```bash
 npm install
 cp .env.example .env
-# .env anpassen (DATABASE_URL, JWT_SECRET, ADMIN_*)
+# .env anpassen (DATABASE_URL, JWT_SECRET)
 npm run db:migrate
-npm run bootstrap-admin
 npm run dev   # tsx watch
 ```
+
+Beim ersten Aufruf der Login-Seite wird der allererste Admin-User direkt in
+der PWA angelegt (Setup-Formular: Anzeigename + E-Mail + Passwort). Es ist
+kein Bootstrap-Schritt aus der .env noetig.
 
 ## End-to-End-Test ohne Docker
 
@@ -51,7 +54,7 @@ npm run test:run
 - `npm run db:migrate` — Migrationen ausführen (gegen `DATABASE_URL` in `.env`)
 - `npm run db:push` — Schema direkt in DB pushen (Dev)
 - `npm run db:studio` — drizzle-kit Studio öffnen
-- `npm run bootstrap-admin` — Initial-Admin aus `.env` anlegen (idempotent)
+- Initial-Admin: wird beim ersten Aufruf der Login-Seite per Setup-Formular angelegt.
 
 ## Container-Build
 
@@ -60,8 +63,6 @@ docker build -t bma-lager-api .
 docker run --rm -p 4242:3000 \
   -e DATABASE_URL=postgres://bma:bma@host.docker.internal:5432/bma \
   -e JWT_SECRET=... \
-  -e ADMIN_EMAIL=... \
-  -e ADMIN_PASSWORD=... \
   -e FOTOS_DIR=/var/lib/bma-lager/fotos \
   -v $PWD/var:/var/lib/bma-lager \
   bma-lager-api

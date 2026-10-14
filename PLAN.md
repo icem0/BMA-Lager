@@ -331,7 +331,7 @@ Jeder Route hat ein `meta.requiresAuth: true` (default) und optional `meta.roles
 > Hinweis: In **offline**-Phasen prüft die PWA die Rolle lokal nur als UI-Hint (Buttons ausblenden). Die echte Prüfung passiert serverseitig beim nächsten Sync. Stornos/Korrekturen eines `user`, die ein `admin`-Recht bräuchten, werden in der Outbox mit `pending_approval: true` markiert.
 
 ### Bootstrap
-- Beim ersten Start (`db.users` leer) wird per CLI `npm run bootstrap-admin` ein initialer Admin angelegt (Email + Passwort aus `.env`). Endpoint zur Laufzeit gibt es aus Sicherheitsgründen **nicht**.
+- Beim ersten Start (`db.users` leer) zeigt die Login-View ein Setup-Formular (Anzeigename + E-Mail + Passwort mit Bestätigung). Das Formular ruft `POST /api/auth/setup` auf, der Endpoint legt den ersten User als Admin an und verweigert sich, sobald bereits ein User existiert (`409 SETUP_DONE`). Anschließend läuft der Login normal über `/api/auth/login`. Es gibt keinen CLI-Bootstrap mehr — die `.env` enthält keine Admin-Credentials.
 
 ---
 
@@ -622,7 +622,7 @@ Test-Setup mit `fake-indexeddb` fürs Frontend und `pg-mem` (oder echtes Test-Po
 10. **Backend-Monorepo anlegen** — `server/` mit eigener `package.json`, `tsconfig.json`, Fastify-Bootstrap, Healthz-Endpoint. `npm run dev` startet beides (PWA + API) parallel.
 11. **Datenbank & Migrationen** — Drizzle-Schema (`users`, `refresh_tokens`, `artikel`, `standorte`, `buchungen`, `projekte`, `fotos`, `audit_log`), Migrationen generieren, `db:migrate`-Skript.
 12. **Auth-Backend** — Login/Refresh/Logout, JWT-Helper, `requireAuth`/`requireRole`-Middleware, Rate-Limit. **Tests** für Login-Flow.
-13. **Bootstrap-Admin** — CLI `npm run bootstrap-admin` legt ersten Admin aus `.env` an.
+13. **Bootstrap-Admin via PWA-Setup** — `GET /api/auth/setup-status` + `POST /api/auth/setup`. LoginView zeigt das Setup-Formular, wenn `users` leer ist.
 14. **Docker-Compose-Grundgerüst** — `docker-compose.yml` mit `db`, `api`, `pwa`, `caddy`. Lokal `docker compose up` startet alles. Volumes, Healthcheck.
 15. **Caddyfile + Cloudflare-Tunnel** — Reverse-Proxy konfigurieren, `cloudflared`-Service, `.env.example`.
 16. **PWA-Auth** — `LoginView`, `useAuthStore`, Auth-Guard im Router, Token-Storage, Auto-Logout bei 401.

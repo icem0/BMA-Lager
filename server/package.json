@@ -13,8 +13,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts",
     "db:push": "drizzle-kit push",
-    "db:studio": "drizzle-kit studio",
-    "bootstrap-admin": "tsx src/cli/bootstrap-admin.ts"
+    "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.3",

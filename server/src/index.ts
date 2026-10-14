@@ -9,6 +9,7 @@ import { registerJwt } from './auth/jwt.js'
 import { registerAuthDecorators } from './auth/middleware.js'
 import { registerRateLimit } from './auth/rate-limit.js'
 import { authRoutes } from './auth/routes.js'
+import { setupRoutes } from './auth/setup-routes.js'
 import { syncRoutes } from './sync/routes.js'
 import { fotoRoutes } from './fotos/routes.js'
 import { userRoutes } from './users/routes.js'
@@ -47,6 +48,12 @@ async function main() {
   // Login-Rate-Limit (nur für Login-Route)
   await app.register(async (instance) => {
     await authRoutes(instance)
+  })
+
+  // Setup-Endpoints (kein Auth, kein Rate-Limit — das hier ist die einmalige
+  // Erstanmeldung, die muss zuverlässig funktionieren).
+  await app.register(async (instance) => {
+    await setupRoutes(instance)
   })
 
   // Restliche Routes (mit requireAuth als preHandler)

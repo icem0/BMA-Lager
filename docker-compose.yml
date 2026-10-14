@@ -10,11 +10,11 @@
 # nginx, Caddy, Traefik oder einem Cloud-Loadbalancer vor diesem Stack.
 #
 # Images:
-#   api / pwa / migrate / bootstrap werden direkt von GitHub Container Registry
+#   api / pwa / migrate werden direkt von GitHub Container Registry
 #   (GHCR) als `ghcr.io/icem0/bma-lager-{api,pwa}:latest` referenziert.
 #   Der CI-Workflow `.github/workflows/build-and-push.yml` baut und pusht
-#   diese Images bei jedem Push auf `main`. `migrate` und `bootstrap` sind
-#   Entry-Points desselben API-Images.
+#   diese Images bei jedem Push auf `main`. `migrate` ist ein Entry-Point
+#   desselben API-Images.
 #
 # Start:   docker compose up -d          # zieht Images von GHCR, startet den Stack
 # Update:  docker compose pull && docker compose up -d
@@ -54,8 +54,6 @@ services:
       DATABASE_URL: postgres://${DB_USER:-bma}:${DB_PASSWORD}@db:5432/${DB_NAME:-bma}
       JWT_SECRET: ${JWT_SECRET}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-12h}
-      ADMIN_EMAIL: ${ADMIN_EMAIL}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       COOKIE_DOMAIN: ${COOKIE_DOMAIN}
       CORS_ORIGIN: ${CORS_ORIGIN}
@@ -118,26 +116,7 @@ services:
     environment:
       DATABASE_URL: postgres://${DB_USER:-bma}:${DB_PASSWORD}@db:5432/${DB_NAME:-bma}
       JWT_SECRET: ${JWT_SECRET}
-      ADMIN_EMAIL: ${ADMIN_EMAIL}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
     entrypoint: ["node", "dist/db/migrate.js"]
-    networks: [internal]
-    restart: "no"
-
-  # Einmaliger Job: Initial-Admin aus .env anlegen.
-  # Aufruf: docker compose --profile bootstrap up
-  bootstrap:
-    image: ghcr.io/icem0/bma-lager-api:latest
-    profiles: ["bootstrap"]
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
-    environment:
-      DATABASE_URL: postgres://${DB_USER:-bma}:${DB_PASSWORD}@db:5432/${DB_NAME:-bma}
-      JWT_SECRET: ${JWT_SECRET}
-      ADMIN_EMAIL: ${ADMIN_EMAIL}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
-    entrypoint: ["node", "dist/cli/bootstrap-admin.js"]
     networks: [internal]
     restart: "no"
 

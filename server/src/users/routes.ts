@@ -19,6 +19,7 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
         .select({
           id: users.id,
           email: users.email,
+          anzeigename: users.anzeigename,
           rolle: users.rolle,
           aktiv: users.aktiv,
           erstelltAm: users.erstelltAm,
@@ -55,6 +56,7 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
         erstelltAm: new Date(),
         letzterLoginAm: null,
         mustChangePassword: true,
+        anzeigename: '',
       })
       return reply.code(201).send({ id, email: email.toLowerCase(), rolle, aktiv: true })
     },

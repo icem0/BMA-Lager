@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Bootet embedded-postgres, läuft Migrationen, ruft Bootstrap-Admin und Health-Endpoint.
+// Bootet embedded-postgres, läuft Migrationen, ruft /api/auth/setup-status auf.
 // Sinn: lokale Testumgebung ohne Docker.
 //
 // Aufruf:  node scripts/smoke-db.mjs
@@ -7,7 +7,7 @@
 import { createRequire } from 'node:module'
 const require = createRequire(import.meta.url)
 const { default: EmbeddedPostgres } = require('embedded-postgres')
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 const DATA_DIR = './var/pg-data'
@@ -36,41 +36,24 @@ async function main() {
     const created = await pg.createDatabase(DB)
     console.log('Datenbank angelegt:', created ? 'OK' : 'existierte')
 
-    // Migration
     console.log('Migrationen ausführen …')
     const { default: postgres } = await import('postgres')
     const sql = postgres({
-        host: 'localhost',
-        port: PORT,
-        user: USER,
-        password: PASSWORD,
-        database: DB,
-      })
-    const migration = await import('../node_modules/drizzle-orm/postgres-js/migrator.js')
-    // nicht direkt nutzbar — wir führen unsere SQL manuell aus
-    await sql.unsafe((await import('node:fs')).readFileSync('src/db/migrations/0001_initial.sql', 'utf-8'))
+      host: 'localhost',
+      port: PORT,
+      user: USER,
+      password: PASSWORD,
+      database: DB,
+    })
+    // Wir fuehren die SQL-Dateien manuell aus (Drizzle-Migrator ist hier
+    // umstaendlich, weil embedded-postgres eigene Connect-Lib hat).
+    const migrations = ['0001_initial.sql', '0002_add_user_anzeigename.sql']
+    for (const m of migrations) {
+      console.log('  ->', m)
+      await sql.unsafe(readFileSync(`src/db/migrations/${m}`, 'utf-8'))
+    }
     console.log('Migrationen angewendet.')
     await sql.end()
-
-    // Bootstrap-Admin
-    const { spawnSync } = await import('node:child_process')
-    const env = {
-      ...process.env,
-      DATABASE_URL: `postgres://${USER}:${PASSWORD}@localhost:${PORT}/${DB}`,
-      JWT_SECRET: 'dev-secret-please-replace-with-a-real-one-32chars',
-      ADMIN_EMAIL: 'admin@example.com',
-      ADMIN_PASSWORD: 'admin-dev-1234',
-    }
-    const r = spawnSync(
-      process.execPath,
-      ['--import', 'tsx', 'src/cli/bootstrap-admin.ts'],
-      { env, stdio: 'inherit', cwd: '.' },
-    )
-    if (r.status !== 0) {
-      console.error('Bootstrap-Admin fehlgeschlagen (Status', r.status, ')')
-    } else {
-      console.log('Bootstrap-Admin angelegt.')
-    }
   } finally {
     console.log('Stoppe Postgres …')
     await pg.stop()
