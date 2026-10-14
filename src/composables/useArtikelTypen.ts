@@ -28,7 +28,7 @@ export function useArtikelTypen() {
    */
   const typVerwendungen = computed<TypVerwendung[]>(() => {
     const konfiguriert = settings.settings.artikelTypen
-    const aktive = artikelStore.artikel.filter((a) => !a.archiviert)
+    const aktive = artikelStore.artikel.filter((a) => a.status !== 'archiviert')
     const counts = new Map<string, number>()
     for (const a of aktive) counts.set(a.typ, (counts.get(a.typ) ?? 0) + 1)
 

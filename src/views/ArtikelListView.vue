@@ -16,15 +16,13 @@ const { alleBenutzten } = useArtikelTypen()
 
 const suche = ref('')
 const filterTyp = ref('')
-const filterStatus = ref<'alle' | ArtikelStatus>('alle')
-const nurAktive = ref(true)
+const filterStatus = ref<'alle' | ArtikelStatus>('verfuegbar')
 
 function applyFilter(): void {
   artikelStore.setFilter({
     suche: suche.value,
     typ: filterTyp.value || undefined,
     status: filterStatus.value,
-    nurAktive: nurAktive.value,
   })
 }
 
@@ -36,17 +34,13 @@ function bestandStandard(artikelId: string, standortId: string): number {
 
 const standardStandort = computed(() => standortStore.standardlager)
 
-async function archivieren(id: string): Promise<void> {
-  if (!confirm('Archivieren?')) return
-  await artikelStore.archivieren(id)
-}
-
 const statusOptionen: { value: 'alle' | ArtikelStatus; labelKey: string }[] = [
-  { value: 'alle', labelKey: 'view.artikel.filter.statusAlle' },
   { value: 'verfuegbar', labelKey: 'view.artikel.status.verfuegbar' },
   { value: 'reserviert', labelKey: 'view.artikel.status.reserviert' },
   { value: 'gesperrt', labelKey: 'view.artikel.status.gesperrt' },
   { value: 'ausgesondert', labelKey: 'view.artikel.status.ausgesondert' },
+  { value: 'archiviert', labelKey: 'view.artikel.status.archiviert' },
+  { value: 'alle', labelKey: 'view.artikel.filter.statusAlle' },
 ]
 </script>
 
@@ -73,10 +67,6 @@ const statusOptionen: { value: 'alle' | ArtikelStatus; labelKey: string }[] = [
           {{ t(opt.labelKey) }}
         </option>
       </select>
-      <label class="check">
-        <input v-model="nurAktive" type="checkbox" @change="applyFilter" />
-        <span>{{ t('view.artikel.filter.nurAktive') }}</span>
-      </label>
     </div>
 
     <p v-if="zeilen.length === 0" class="empty-state">{{ t('view.artikel.leer') }}</p>
@@ -86,7 +76,6 @@ const statusOptionen: { value: 'alle' | ArtikelStatus; labelKey: string }[] = [
         <tr>
           <th>{{ t('view.artikel.spalten.titel') }}</th>
           <th>{{ t('view.artikel.spalten.typ') }}</th>
-          <th>{{ t('view.artikel.spalten.status') }}</th>
           <th v-if="standardStandort" class="num">
             {{ t('view.artikel.spalten.bestand') }} ({{ standardStandort.name }})
           </th>
@@ -99,12 +88,6 @@ const statusOptionen: { value: 'alle' | ArtikelStatus; labelKey: string }[] = [
             <RouterLink :to="`/artikel/${a.id}`" class="link">{{ a.titel }}</RouterLink>
           </td>
           <td>{{ a.typ }}</td>
-          <td>
-            <span v-if="a.archiviert" class="badge">
-              {{ t('view.artikel.detail.archiviert') }}
-            </span>
-            <span v-else class="badge">{{ t(`view.artikel.status.${a.status}`) }}</span>
-          </td>
           <td v-if="standardStandort" class="num">
             {{ bestandStandard(a.id, standardStandort.id) }}
           </td>
@@ -112,9 +95,6 @@ const statusOptionen: { value: 'alle' | ArtikelStatus; labelKey: string }[] = [
             <RouterLink :to="`/buchung/neu?artikelId=${a.id}`" class="btn">
               {{ t('view.artikel.detail.buchen') }}
             </RouterLink>
-            <button v-if="!a.archiviert" type="button" class="danger" @click="archivieren(a.id)">
-              {{ t('view.artikel.detail.archivieren') }}
-            </button>
           </td>
         </tr>
       </tbody>
@@ -128,10 +108,6 @@ const statusOptionen: { value: 'alle' | ArtikelStatus; labelKey: string }[] = [
         <RouterLink :to="`/artikel/${a.id}`" class="card-list-title">{{ a.titel }}</RouterLink>
         <div class="card-list-meta">
           <span class="badge">{{ a.typ }}</span>
-          <span v-if="a.archiviert" class="badge">
-            {{ t('view.artikel.detail.archiviert') }}
-          </span>
-          <span v-else class="badge">{{ t(`view.artikel.status.${a.status}`) }}</span>
           <span v-if="standardStandort">
             <span class="muted">{{ t('view.artikel.spalten.bestand') }}:</span>
             <span class="num">{{ bestandStandard(a.id, standardStandort.id) }}</span>
@@ -141,14 +117,6 @@ const statusOptionen: { value: 'alle' | ArtikelStatus; labelKey: string }[] = [
           <RouterLink :to="`/buchung/neu?artikelId=${a.id}`" class="btn primary">
             {{ t('view.artikel.detail.buchen') }}
           </RouterLink>
-          <button
-            v-if="!a.archiviert"
-            type="button"
-            class="btn danger"
-            @click="archivieren(a.id)"
-          >
-            {{ t('view.artikel.detail.archivieren') }}
-          </button>
         </div>
       </li>
     </ul>

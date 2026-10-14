@@ -63,7 +63,7 @@ export const artikel = pgTable(
     sharePointId: integer('share_point_id'),
     titel: text('titel').notNull(),
     status: text('status', {
-      enum: ['verfuegbar', 'reserviert', 'gesperrt', 'ausgesondert'],
+      enum: ['verfuegbar', 'reserviert', 'gesperrt', 'ausgesondert', 'archiviert'],
     })
       .notNull()
       .default('verfuegbar'),
@@ -78,13 +78,11 @@ export const artikel = pgTable(
     listenpreis: integer('listenpreis'), // in Cent, um Floats zu vermeiden
     geaendertAm: timestamp('geaendert_am', { withTimezone: true }).notNull(),
     erstelltAm: timestamp('erstellt_am', { withTimezone: true }).notNull(),
-    archiviert: boolean('archiviert').notNull().default(false),
   },
   (t) => [
     index('artikel_sharepoint_idx').on(t.sharePointId),
     index('artikel_typ_idx').on(t.typ),
     index('artikel_status_idx').on(t.status),
-    index('artikel_archiviert_idx').on(t.archiviert),
   ],
 )
 

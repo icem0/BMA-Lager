@@ -65,7 +65,13 @@ function abbrechen(): void {
   void router.push('/artikel')
 }
 
-const statusOptionen: ArtikelStatus[] = ['verfuegbar', 'reserviert', 'gesperrt', 'ausgesondert']
+const statusOptionen: ArtikelStatus[] = [
+  'verfuegbar',
+  'reserviert',
+  'gesperrt',
+  'ausgesondert',
+  'archiviert',
+]
 </script>
 
 <template>

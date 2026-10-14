@@ -5,7 +5,12 @@
 
 export type Iso = string // ISO-8601 UTC, z. B. "2025-04-14T11:17:49.000Z"
 
-export type ArtikelStatus = 'verfuegbar' | 'reserviert' | 'gesperrt' | 'ausgesondert'
+export type ArtikelStatus =
+  | 'verfuegbar'
+  | 'reserviert'
+  | 'gesperrt'
+  | 'ausgesondert'
+  | 'archiviert'
 export type NachbestellHinweis = 'i.O' | 'bald' | 'dringend' | null
 export type StandortTyp = 'lager' | 'auto' | 'baustelle' | 'extern'
 export type BuchungsTyp =
@@ -29,7 +34,6 @@ export interface Artikel {
   listenpreis: number | null
   geaendertAm: Iso | null
   erstelltAm: Iso
-  archiviert: boolean
 }
 
 export interface Standort {

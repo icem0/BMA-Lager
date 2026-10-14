@@ -35,7 +35,6 @@ describe('validierung.schemas', () => {
         verpackungseinheit: 1,
         geaendertAm: '2025-04-14T11:00:00.000Z',
         erstelltAm: '2025-04-14T11:00:00.000Z',
-        archiviert: false,
       })
       expect(r.success).toBe(true)
     })
@@ -48,7 +47,6 @@ describe('validierung.schemas', () => {
         verpackungseinheit: 1,
         geaendertAm: '2025-04-14T11:00:00.000Z',
         erstelltAm: '2025-04-14T11:00:00.000Z',
-        archiviert: false,
       })
       expect(r.success).toBe(false)
     })
@@ -87,7 +85,6 @@ describe('validierung.schemas', () => {
           verpackungseinheit: 1,
           geaendertAm: '2025-04-14T11:00:00.000Z',
           erstelltAm: '2025-04-14T11:00:00.000Z',
-          archiviert: false,
         },
       }))
       const r = pushPayloadSchema.safeParse({ ops })

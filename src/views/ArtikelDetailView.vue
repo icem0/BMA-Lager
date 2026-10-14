@@ -37,7 +37,7 @@ function nameStandort(id: string): string {
 
 async function archivieren(): Promise<void> {
   if (!artikel.value) return
-  if (!confirm('Archivieren?')) return
+  if (!confirm(t('view.artikel.detail.archivierenFrage'))) return
   await artikelStore.archivieren(artikel.value.id)
   void router.push('/artikel')
 }
@@ -52,7 +52,7 @@ function formatDatum(iso: string): string {
     <header class="view-head">
       <h1>
         {{ artikel.titel }}
-        <span v-if="artikel.archiviert" class="badge">
+        <span v-if="artikel.status === 'archiviert'" class="badge">
           {{ t('view.artikel.detail.archiviert') }}
         </span>
       </h1>
@@ -60,7 +60,12 @@ function formatDatum(iso: string): string {
         <RouterLink :to="`/buchung/neu?artikelId=${artikel.id}`" class="btn primary">
           {{ t('view.artikel.detail.buchen') }}
         </RouterLink>
-        <button v-if="!artikel.archiviert" type="button" class="danger" @click="archivieren">
+        <button
+          v-if="artikel.status !== 'archiviert'"
+          type="button"
+          class="danger"
+          @click="archivieren"
+        >
           {{ t('view.artikel.detail.archivieren') }}
         </button>
       </div>

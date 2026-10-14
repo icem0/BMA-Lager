@@ -21,7 +21,7 @@ export const artikelSchema = z.object({
   id,
   sharePointId: z.number().int().nullable().optional(),
   titel: z.string().min(1),
-  status: z.enum(['verfuegbar', 'reserviert', 'gesperrt', 'ausgesondert']),
+  status: z.enum(['verfuegbar', 'reserviert', 'gesperrt', 'ausgesondert', 'archiviert']),
   typ: z.string(),
   lieferant: z.string().nullable().optional(),
   verpackungseinheit: z.number().int().positive(),
@@ -31,7 +31,6 @@ export const artikelSchema = z.object({
   listenpreis: z.number().int().nullable().optional(),
   geaendertAm: iso,
   erstelltAm: iso,
-  archiviert: z.boolean(),
 })
 
 export const standortSchema = z.object({

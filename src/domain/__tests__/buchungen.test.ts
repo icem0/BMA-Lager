@@ -43,7 +43,6 @@ async function seedArtikel(id: string, name: string): Promise<void> {
     listenpreis: null,
     geaendertAm: null,
     erstelltAm: '2025-01-01T00:00:00.000Z',
-    archiviert: false,
   }
   await testDb.artikel.add(artikel)
 }

@@ -310,7 +310,6 @@ function mappeArtikelZeile(row: string[], headers: string[], mapping: ArtikelMap
     listenpreis: parseFloatOrNull(feld('listenpreis')),
     geaendertAm: parseIsoDatum(feld('geaendertAm')),
     erstelltAm: now,
-    archiviert: false,
   }
 }
 

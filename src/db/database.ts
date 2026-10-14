@@ -2,9 +2,12 @@
 // Schema-Versionierung explizit: jede Schema-Änderung legt eine neue .version() an.
 // Die Domänen-Schicht liest und schreibt über dieses Singleton.
 //
-// Aktuelles Schema: v3 (Outbox + serverId-Index).
-// Frühere Versionen (v1, v2) sind nur noch für Migration existierender
-// Browser-DBs. Wenn du eine frische DB anlegst, wird direkt v3 verwendet.
+// Aktuelles Schema: v4 (Artikel-Status enthält 'archiviert', archiviert-Flag entfernt).
+// Frühere Versionen (v1–v3) sind nur noch für Migration existierender
+// Browser-DBs. Wenn du eine frische DB anlegst, wird direkt v4 verwendet.
+// Schema-Versionen 1–3 behalten weiterhin das `archiviert`-Feld auf `artikel`,
+// weil sie die jeweilige Migrations-Historie abbilden. Sie werden nie erneut
+// "aktiviert" — Dexie springt beim Upgrade direkt zur höchsten Version.
 
 import Dexie, { type Table } from 'dexie'
 import type {
@@ -64,6 +67,33 @@ export class BmaLagerDb extends Dexie {
       auditLog: 'id, aktion, entitaet, entitaetId, zeit',
       outbox: 'id, entity, syncedAt, createdAt',
     })
+
+    // v4: Artikel-Archivierung wandert vom `archiviert`-Flag in den Status.
+    //      - `archiviert`-Index auf `artikel` entfällt
+    //      - vorhandene `archiviert=true`-Artikel bekommen `status='archiviert'`
+    //      - `archiviert`-Feld wird aus dem Datensatz entfernt
+    this.version(4)
+      .stores({
+        artikel: 'id, sharePointId, typ, status, titel',
+        standorte: 'id, name, typ, archiviert',
+        buchungen:
+          'id, artikelId, standortId, standortZielId, typ, erstelltAm, storno, stornoVon, paarId, serverId',
+        projekte: 'id, nummer, archiviert',
+        einstellungen: 'key',
+        auditLog: 'id, aktion, entitaet, entitaetId, zeit',
+        outbox: 'id, entity, syncedAt, createdAt',
+      })
+      .upgrade(async (tx) => {
+        await tx
+          .table('artikel')
+          .toCollection()
+          .modify((row: Record<string, unknown>) => {
+            if (row['archiviert'] === true) {
+              row['status'] = 'archiviert'
+            }
+            delete row['archiviert']
+          })
+      })
   }
 }
 

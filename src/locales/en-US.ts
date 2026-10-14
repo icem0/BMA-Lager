@@ -22,18 +22,17 @@ export default {
         typ: 'Type',
         status: 'Status',
         statusAlle: 'all',
-        nurAktive: 'active only',
       },
       status: {
         verfuegbar: 'available',
         reserviert: 'reserved',
         gesperrt: 'locked',
         ausgesondert: 'discarded',
+        archiviert: 'archived',
       },
       spalten: {
         titel: 'Title',
         typ: 'Type',
-        status: 'Status',
         bestand: 'Stock',
       },
       leer: 'No items found.',
@@ -43,6 +42,7 @@ export default {
         historie: 'History',
         buchen: 'Record',
         archivieren: 'Archive',
+        archivierenFrage: 'Archive this item?',
         archiviert: 'archived',
       },
       form: {

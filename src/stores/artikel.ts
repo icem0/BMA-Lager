@@ -29,13 +29,12 @@ export interface ArtikelFilter {
   suche?: string
   typ?: string
   status?: ArtikelStatus | 'alle'
-  nurAktive?: boolean
 }
 
 export const useArtikelStore = defineStore('artikel', () => {
   const artikel = ref<Artikel[]>([])
   const geladen = ref(false)
-  const filter = ref<ArtikelFilter>({ nurAktive: true, status: 'alle' })
+  const filter = ref<ArtikelFilter>({ status: 'verfuegbar' })
   let subscription: Subscription | null = null
 
   function start() {
@@ -66,7 +65,6 @@ export const useArtikelStore = defineStore('artikel', () => {
     const f = filter.value
     const suche = (f.suche ?? '').trim().toLowerCase()
     return artikel.value.filter((a) => {
-      if (f.nurAktive && a.archiviert) return false
       if (f.status && f.status !== 'alle' && a.status !== f.status) return false
       if (f.typ && a.typ !== f.typ) return false
       if (suche) {
@@ -100,7 +98,6 @@ export const useArtikelStore = defineStore('artikel', () => {
       listenpreis: e.listenpreis ?? null,
       geaendertAm: now,
       erstelltAm: now,
-      archiviert: false,
     }
     await getDb().artikel.add(a)
     await queueOp('artikel', 'create', a)
@@ -146,7 +143,7 @@ export const useArtikelStore = defineStore('artikel', () => {
   async function archivieren(id: string): Promise<void> {
     const a = await getDb().artikel.get(id)
     if (!a) return
-    const updated: Artikel = { ...a, archiviert: true, geaendertAm: jetztIso() }
+    const updated: Artikel = { ...a, status: 'archiviert', geaendertAm: jetztIso() }
     await getDb().artikel.put(updated)
     await queueOp('artikel', 'update', updated)
   }

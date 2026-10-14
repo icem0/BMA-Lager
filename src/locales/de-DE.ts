@@ -22,18 +22,17 @@ export default {
         typ: 'Typ',
         status: 'Status',
         statusAlle: 'alle',
-        nurAktive: 'nur aktive',
       },
       status: {
         verfuegbar: 'verfügbar',
         reserviert: 'reserviert',
         gesperrt: 'gesperrt',
         ausgesondert: 'ausgesondert',
+        archiviert: 'archiviert',
       },
       spalten: {
         titel: 'Titel',
         typ: 'Typ',
-        status: 'Status',
         bestand: 'Bestand',
       },
       leer: 'Keine Artikel gefunden.',
@@ -43,6 +42,7 @@ export default {
         historie: 'Historie',
         buchen: 'Buchen',
         archivieren: 'Archivieren',
+        archivierenFrage: 'Diesen Artikel archivieren?',
         archiviert: 'archiviert',
       },
       form: {

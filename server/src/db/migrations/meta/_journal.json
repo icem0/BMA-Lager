@@ -15,6 +15,13 @@
       "when": 1700000001000,
       "tag": "0002_add_user_anzeigename",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1700000002000,
+      "tag": "0003_artikel_status_archiviert",
+      "breakpoints": true
     }
   ]
 }
