@@ -80,8 +80,14 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
-    ports:
-      - "${API_PORT:-4242}:3000"
+    # Default: API nur intern (pwa-nginx proxied /api/*).
+    # Fuer direkten Zugriff (z. B. CLI, curl, Debug) die naechste Zeile
+    # einkommentieren — dann ist die API unter http://HOST:${API_PORT:-4242}
+    # zusaetzlich erreichbar.
+    expose:
+      - "3000"
+    # ports:
+    #   - "${API_PORT:-4242}:3000"
     networks: [internal]
 
   pwa:
@@ -93,7 +99,10 @@ services:
       # /usr/share/nginx/html/config.js geschrieben (siehe
       # scripts/pwa-entrypoint.sh) und beim Laden der PWA als
       # window.__BMA_API_URL__ ausgelesen.
-      VITE_API_URL: ${VITE_API_URL:-http://localhost:${API_PORT:-4242}}
+      #
+      # Leer = gleicher Origin (nginx im PWA-Container proxied /api/*).
+      # Sonst = absolute URL (z. B. http://api.example.com:4242).
+      VITE_API_URL: ${VITE_API_URL-}
     ports:
       - "${PWA_PORT:-4280}:3000"
     networks: [internal]

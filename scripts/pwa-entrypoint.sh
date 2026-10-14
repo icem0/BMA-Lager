@@ -6,15 +6,16 @@
 # und liest daraus window.__BMA_API_URL__ (siehe src/auth/api.ts).
 #
 # ENV-Variablen:
-#   VITE_API_URL  Basis-URL des API-Backends (z. B. http://api.example.com:4242)
-#                 Default: http://localhost:4242
+#   VITE_API_URL  Basis-URL des API-Backends.
+#                 Leer oder ungesetzt -> window.__BMA_API_URL__ = ''  (gleicher
+#                 Origin, nginx proxied /api/* an die API).
+#                 Sonst -> absolute URL, z. B. http://api.example.com:4242.
 
 set -eu
 
-VITE_API_URL="${VITE_API_URL:-http://localhost:4242}"
+VITE_API_URL="${VITE_API_URL-}"
 
 # JS-String-Escapung: Backslashes und Anfuehrungszeichen.
-# Fuer typische URLs (http(s)://host[:port]) ausreichend.
 escaped=$(printf '%s' "$VITE_API_URL" | sed 's/\\/\\\\/g; s/"/\\"/g')
 
 cat > /usr/share/nginx/html/config.js <<EOF

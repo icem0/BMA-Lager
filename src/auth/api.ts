@@ -1,31 +1,33 @@
 // API-Client für den Server (Fastify-Backend).
 //
-// Siehe PLAN §9a–9b. Default zeigt auf den Production-Port aus
-// docker-compose.yml (4242). Im Dev-Modus (npm run dev) läuft der
-// Fastify-Server auf 3000; das wird über localStorage überschrieben
-// oder in Settings eingestellt.
+// Siehe PLAN §9a–9b. Im Self-Hosting-Setup liegt nginx im PWA-Container
+// und proxied /api/* an die API (gleicher Origin). Daher ist der
+// Default ein LEERER String — der Browser ruft dann relative URLs auf
+// (/api/auth/login), nginx routet sie an die API.
 //
 // Auflösung der Basis-URL (höchste Priorität zuerst):
 //   1. window.__BMA_API_URL__  — vom Container-Entrypoint aus ENV VITE_API_URL
 //                                gesetzt (siehe scripts/pwa-entrypoint.sh).
-//   2. localStorage['bma.api.url']  — vom User im Browser überschrieben.
-//   3. import.meta.env.VITE_API_URL  — Build-Default (nur bei statischem Build).
-//   4. 'http://localhost:4242'  — Dev-Fallback.
+//                                Leerer String = gleicher Origin.
+//   2. localStorage['bma.api.url']  — vom User im Browser überschrieben
+//                                    (z. B. für Tests gegen einen anderen Server).
+//   3. import.meta.env.VITE_API_URL  — Build-Default (nur bei statischem Build
+//                                    ohne Entrypoint-Generierung).
+//   4. ''  — gleicher Origin (nginx-Reverse-Proxy-Setup).
 //
 // Alle Requests senden Authorization: Bearer <jwt> (falls vorhanden) und
 // behandeln 401 → Auth-Store wird ausgeloggt.
 
 const LS_API_URL = 'bma.api.url'
-const DEFAULT_API_URL = 'http://localhost:4242'
 
 export function getApiBaseUrl(): string {
   const fromWindow = (globalThis as { __BMA_API_URL__?: string }).__BMA_API_URL__
-  if (typeof fromWindow === 'string' && fromWindow.length > 0) return fromWindow
+  if (typeof fromWindow === 'string') return fromWindow
   const stored = localStorage.getItem(LS_API_URL)
   if (stored) return stored
   const fromBuild = import.meta.env.VITE_API_URL
   if (typeof fromBuild === 'string' && fromBuild.length > 0) return fromBuild
-  return DEFAULT_API_URL
+  return ''
 }
 
 export function setApiBaseUrl(url: string): void {
