@@ -3,14 +3,14 @@ import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useBuchungStore } from '../stores/buchung'
-import { useSettingsStore } from '../stores/settings'
+import { useAuthStore } from '../stores/auth'
 import type { Buchung } from '../db/types'
 
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const buchungStore = useBuchungStore()
-const settings = useSettingsStore()
+const auth = useAuthStore()
 
 const buchungId = computed<string>(() => String(route.params.buchungId ?? ''))
 const original = computed<Buchung | undefined>(() =>
@@ -29,7 +29,7 @@ async function speichern(): Promise<void> {
     fehler.value = 'Projekt fehlt.'
     return
   }
-  const erstelltVon = settings.settings.aktuellerBenutzer.trim() || 'unbekannt'
+  const erstelltVon = auth.anzeigename.trim() || 'unbekannt'
   try {
     await buchungStore.mu.kommission({
       buchungId: original.value.id,

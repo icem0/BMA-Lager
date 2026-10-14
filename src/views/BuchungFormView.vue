@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { useArtikelStore } from '../stores/artikel'
 import { useStandortStore } from '../stores/standort'
 import { useBuchungStore } from '../stores/buchung'
-import { useSettingsStore } from '../stores/settings'
+import { useAuthStore } from '../stores/auth'
 import type { BuchungsTyp } from '../db/types'
 import { NegativerBestandWarnung, PflichtfeldFehltError } from '../domain/errors'
 
@@ -15,7 +15,7 @@ const router = useRouter()
 const artikelStore = useArtikelStore()
 const standortStore = useStandortStore()
 const buchungStore = useBuchungStore()
-const settings = useSettingsStore()
+const auth = useAuthStore()
 
 const typen: BuchungsTyp[] = ['einlagerung', 'entnahme', 'umlagerung', 'inventur']
 
@@ -70,7 +70,7 @@ async function speichern(): Promise<void> {
     fehler.value = 'Quell- und Zielstandort sind identisch'
     return
   }
-  const erstelltVon = settings.settings.aktuellerBenutzer.trim() || 'unbekannt'
+  const erstelltVon = auth.anzeigename.trim() || 'unbekannt'
   try {
     if (typ.value === 'einlagerung') {
       await buchungStore.mu.einlagerung({
@@ -129,100 +129,219 @@ function abbrechen(): void {
   if (artikel.value) void router.push(`/artikel/${artikel.value.id}`)
   else void router.push('/buchungen')
 }
+
+function stepper(delta: number): void {
+  const naechster = Math.max(1, Math.floor(menge.value) + delta)
+  menge.value = naechster
+}
+
+function stepperSoll(delta: number): void {
+  const naechster = Math.max(0, Math.floor(sollMenge.value) + delta)
+  sollMenge.value = naechster
+}
+
+const typOptionen = computed(() =>
+  typen.map((wert) => ({
+    wert,
+    label: t(`view.buchung.form.typen.${wert}`),
+    icon: typIcon(wert),
+  })),
+)
+
+function typIcon(wert: BuchungsTyp): string {
+  switch (wert) {
+    case 'einlagerung':
+      return '↓'
+    case 'entnahme':
+      return '↑'
+    case 'umlagerung':
+      return '⇄'
+    case 'inventur':
+      return '∑'
+  }
+  return '•'
+}
 </script>
 
 <template>
   <section class="view">
     <header class="view-head">
       <h1>{{ t('view.buchung.form.h1') }}</h1>
-      <RouterLink to="/buchungen" class="btn">{{ t('view.buchung.form.abbrechen') }}</RouterLink>
+      <RouterLink to="/buchungen" class="btn desktop-only">
+        {{ t('view.buchung.form.abbrechen') }}
+      </RouterLink>
     </header>
 
-    <div class="card">
-      <form class="form" @submit.prevent="speichern">
-        <label>
-          <span>{{ t('view.buchung.form.typ') }}</span>
-          <select v-model="typ">
-            <option v-for="opt in typen" :key="opt" :value="opt">
-              {{ t(`view.buchung.form.typen.${opt}`) }}
-            </option>
-          </select>
-        </label>
-
-        <label>
-          <span>{{ t('view.buchung.form.artikel') }} *</span>
-          <select v-model="artikelId" required>
-            <option value="" disabled>— wählen —</option>
-            <option v-for="a in artikelStore.artikel" :key="a.id" :value="a.id">
-              {{ a.titel }}
-            </option>
-          </select>
-        </label>
-
-        <label>
-          <span>{{ t('view.buchung.form.standort') }} *</span>
-          <select v-model="standortId" required>
-            <option v-for="s in standortStore.aktive" :key="s.id" :value="s.id">
-              {{ s.name }}
-            </option>
-          </select>
-        </label>
-
-        <label v-if="zielErforderlich">
-          <span>{{ t('view.buchung.form.zielstandort') }} *</span>
-          <select v-model="zielStandortId" required>
-            <option value="" disabled>— wählen —</option>
-            <option v-for="s in standortStore.aktive" :key="s.id" :value="s.id">
-              {{ s.name }}
-            </option>
-          </select>
-        </label>
-
-        <div class="row">
-          <label v-if="mengeErforderlich">
-            <span>{{ t('view.buchung.form.menge') }} *</span>
-            <input v-model.number="menge" type="number" min="1" required />
-          </label>
-          <label v-if="sollMengeErforderlich">
-            <span>{{ t('view.buchung.form.sollMenge') }} *</span>
-            <input v-model.number="sollMenge" type="number" min="0" required />
+    <form class="card buchung-card" @submit.prevent="speichern">
+      <fieldset class="typ-feldset">
+        <legend>{{ t('view.buchung.form.typ') }}</legend>
+        <div class="tile-group" role="radiogroup" :aria-label="t('view.buchung.form.typ')">
+          <label
+            v-for="opt in typOptionen"
+            :key="opt.wert"
+            class="tile"
+            :class="{ active: typ === opt.wert }"
+          >
+            <input
+              type="radio"
+              name="buchung-typ"
+              :value="opt.wert"
+              :checked="typ === opt.wert"
+              @change="typ = opt.wert"
+            />
+            <span class="tile-icon" aria-hidden="true">{{ opt.icon }}</span>
+            <span class="tile-label">{{ opt.label }}</span>
           </label>
         </div>
+      </fieldset>
 
-        <label>
-          <span>{{ t('view.buchung.form.projekt') }}</span>
-          <input v-model="projekt" autocomplete="off" />
-        </label>
-        <label>
-          <span>{{ t('view.buchung.form.kommentar') }}</span>
-          <input v-model="kommentar" autocomplete="off" />
-        </label>
+      <label>
+        <span>{{ t('view.buchung.form.artikel') }} *</span>
+        <select v-model="artikelId" required>
+          <option value="" disabled>— wählen —</option>
+          <option v-for="a in artikelStore.artikel" :key="a.id" :value="a.id">
+            {{ a.titel }}
+          </option>
+        </select>
+      </label>
 
-        <p v-if="fehler" class="fehler">{{ fehler }}</p>
-        <p v-if="warnung" class="hint hint-warn">{{ warnung }}</p>
+      <label>
+        <span>{{ t('view.buchung.form.standort') }} *</span>
+        <select v-model="standortId" required>
+          <option v-for="s in standortStore.aktive" :key="s.id" :value="s.id">
+            {{ s.name }}
+          </option>
+        </select>
+      </label>
 
-        <div class="form-actions">
-          <button type="submit" class="primary">{{ t('view.buchung.form.speichern') }}</button>
-          <button type="button" @click="abbrechen">
-            {{ t('view.buchung.form.abbrechen') }}
+      <label v-if="zielErforderlich">
+        <span>{{ t('view.buchung.form.zielstandort') }} *</span>
+        <select v-model="zielStandortId" required>
+          <option value="" disabled>— wählen —</option>
+          <option v-for="s in standortStore.aktive" :key="s.id" :value="s.id">
+            {{ s.name }}
+          </option>
+        </select>
+      </label>
+
+      <div v-if="mengeErforderlich" class="menge-block">
+        <span class="menge-label">{{ t('view.buchung.form.menge') }} *</span>
+        <div class="stepper" role="group" :aria-label="t('view.buchung.form.menge')">
+          <button
+            type="button"
+            :disabled="menge <= 1"
+            :aria-label="`Menge um 1 verringern`"
+            @click="stepper(-1)"
+          >
+            −
+          </button>
+          <input
+            v-model.number="menge"
+            type="number"
+            min="1"
+            inputmode="numeric"
+            required
+            :aria-label="t('view.buchung.form.menge')"
+          />
+          <button type="button" :aria-label="`Menge um 1 erhöhen`" @click="stepper(1)">
+            +
           </button>
         </div>
+      </div>
 
-        <p v-if="standardStandort" class="hint">Standard-Standort: {{ standardStandort.name }}</p>
-      </form>
-    </div>
+      <div v-if="sollMengeErforderlich" class="menge-block">
+        <span class="menge-label">{{ t('view.buchung.form.sollMenge') }} *</span>
+        <div class="stepper" role="group" :aria-label="t('view.buchung.form.sollMenge')">
+          <button
+            type="button"
+            :disabled="sollMenge <= 0"
+            :aria-label="`Sollmenge um 1 verringern`"
+            @click="stepperSoll(-1)"
+          >
+            −
+          </button>
+          <input
+            v-model.number="sollMenge"
+            type="number"
+            min="0"
+            inputmode="numeric"
+            required
+            :aria-label="t('view.buchung.form.sollMenge')"
+          />
+          <button type="button" :aria-label="`Sollmenge um 1 erhöhen`" @click="stepperSoll(1)">
+            +
+          </button>
+        </div>
+      </div>
+
+      <label>
+        <span>{{ t('view.buchung.form.projekt') }}</span>
+        <input v-model="projekt" autocomplete="off" />
+      </label>
+      <label>
+        <span>{{ t('view.buchung.form.kommentar') }}</span>
+        <input v-model="kommentar" autocomplete="off" />
+      </label>
+
+      <p v-if="fehler" class="fehler">{{ fehler }}</p>
+      <p v-if="warnung" class="hint hint-warn">{{ warnung }}</p>
+      <p v-if="standardStandort" class="hint">
+        Standard-Standort: {{ standardStandort.name }}
+      </p>
+
+      <!-- Sticky Save-Bar: auf Mobile immer in Daumenreichweite,
+           auf Desktop normale Form-Actions. -->
+      <div class="sticky-form-bar">
+        <button type="submit" class="primary">
+          {{ t('view.buchung.form.speichern') }}
+        </button>
+        <button type="button" class="btn" @click="abbrechen">
+          {{ t('view.buchung.form.abbrechen') }}
+        </button>
+      </div>
+    </form>
   </section>
 </template>
 
 <style scoped>
-.row {
+.buchung-card {
   display: grid;
-  grid-template-columns: 1fr 1fr;
   gap: 0.85rem;
 }
-@media (max-width: 540px) {
-  .row {
-    grid-template-columns: 1fr;
+
+.typ-feldset {
+  border: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 0.4rem;
+}
+.typ-feldset legend {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  font-weight: 500;
+  padding: 0;
+  margin-bottom: 0.25rem;
+}
+
+.menge-block {
+  display: grid;
+  gap: 0.3rem;
+}
+.menge-label {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+/* Sticky-Bar im Desktop-Modus entkoppeln vom Card-Rand. */
+@media (min-width: 721px) {
+  .buchung-card .sticky-form-bar {
+    position: static;
+    margin: 0;
+    padding: 0;
+    border: none;
+    background: transparent;
   }
 }
 </style>

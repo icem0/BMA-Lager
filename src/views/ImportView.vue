@@ -330,44 +330,18 @@ async function backupSpeichern(): Promise<void> {
 .mapping {
   margin: 1rem 0;
 }
-.mapping table {
-  border-collapse: collapse;
-  width: 100%;
-}
-.mapping th,
-.mapping td {
-  padding: 0.4rem;
-  border-bottom: 1px solid #eee;
-  text-align: left;
+.validation,
+.report {
+  margin-top: 1rem;
 }
 .actions {
   display: flex;
   gap: 0.5rem;
   margin: 1rem 0;
+  flex-wrap: wrap;
+  align-items: center;
 }
-.actions .primary {
-  background: #0b3d91;
-  color: white;
-}
-.validation,
-.report {
-  margin-top: 1rem;
-}
-.fehler {
-  color: #b00020;
-}
-.hint {
-  color: #888;
-  font-size: 0.85rem;
-  margin-top: 2rem;
-}
-.hint.hint-warn {
-  color: #b07500;
-  margin: 0 0 0 0.5rem;
-}
-.hint.hint-ok {
-  color: #0a7a3a;
-  display: block;
-  margin-top: 0.25rem;
+.actions p {
+  margin: 0;
 }
 </style>
