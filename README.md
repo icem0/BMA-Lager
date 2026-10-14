@@ -99,12 +99,12 @@ npm install
 npm run db:migrate
 npm run bootstrap-admin
 npm run dev
-# → http://localhost:3000
+# → http://localhost:4242
 
 # 3) Frontend
 cd ..
 npm install
-# VITE_API_URL=http://localhost:3000 npm run dev
+# VITE_API_URL=http://localhost:3000 npm run dev  # Dev-API bleibt auf 3000
 ```
 
 ---
@@ -171,7 +171,7 @@ Jede Buchung hat eine unveränderliche `id` (UUID) und `erstelltAm`-Zeitstempel.
 
 ### Docker-Compose (ohne Tunnel, ohne Reverse-Proxy im Stack)
 
-Die Container `bma-lager-api` (Port 3000) und `bma-lager-pwa` (Port 8080) werden **direkt am Host exponiert**. Wenn du TLS, eine Domain oder eine Firewall brauchst, kümmerst du dich **extern** darum — z. B. mit einem nginx, Caddy, Traefik, HAProxy, oder einem Cloud-Loadbalancer, der auf 3000/8080 proxied. In diesem Repo wird kein Reverse-Proxy mitgeliefert.
+Die Container `bma-lager-api` (Port 4242) und `bma-lager-pwa` (Port 4280) werden **direkt am Host exponiert**. Wenn du TLS, eine Domain oder eine Firewall brauchst, kümmerst du dich **extern** darum — z. B. mit einem nginx, Caddy, Traefik, HAProxy, oder einem Cloud-Loadbalancer, der auf 4242/4280 proxied. In diesem Repo wird kein Reverse-Proxy mitgeliefert.
 
 ```bash
 # 1) Repo klonen
@@ -218,9 +218,9 @@ server {
     ssl_certificate /etc/letsencrypt/live/.../fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/.../privkey.pem;
 
-    location /api/ { proxy_pass http://127.0.0.1:3000; }
-    location /fotos/ { proxy_pass http://127.0.0.1:3000; }
-    location / { proxy_pass http://127.0.0.1:8080; }
+    location /api/ { proxy_pass http://127.0.0.1:4242; }
+    location /fotos/ { proxy_pass http://127.0.0.1:4242; }
+    location / { proxy_pass http://127.0.0.1:4280; }
 }
 ```
 

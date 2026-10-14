@@ -57,7 +57,7 @@ npm run test:run
 
 ```bash
 docker build -t bma-lager-api .
-docker run --rm -p 3000:3000 \
+docker run --rm -p 4242:3000 \
   -e DATABASE_URL=postgres://bma:bma@host.docker.internal:5432/bma \
   -e JWT_SECRET=... \
   -e ADMIN_EMAIL=... \

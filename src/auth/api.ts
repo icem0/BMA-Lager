@@ -1,7 +1,12 @@
 // API-Client für den Server (Fastify-Backend).
 //
-// Siehe PLAN §9a–9b. Server läuft default auf http://localhost:3000.
-// Konfiguration via `localStorage.bma.api.url` (kann der Admin in Einstellungen setzen).
+// Siehe PLAN §9a–9b. Default zeigt auf den Production-Port aus
+// docker-compose.yml (4242). Im Dev-Modus (npm run dev) läuft der
+// Fastify-Server auf 3000; das wird über localStorage überschrieben
+// oder in Settings eingestellt.
+//
+// Konfiguration via `localStorage.bma.api.url` (kann der Admin in
+// Einstellungen setzen).
 //
 // Alle Requests senden Authorization: Bearer <jwt> (falls vorhanden) und
 // behandeln 401 → Auth-Store wird ausgeloggt.
@@ -10,7 +15,7 @@ const LS_API_URL = 'bma.api.url'
 
 export function getApiBaseUrl(): string {
   const stored = localStorage.getItem(LS_API_URL)
-  return stored ?? 'http://localhost:3000'
+  return stored ?? 'http://localhost:4242'
 }
 
 export function setApiBaseUrl(url: string): void {
