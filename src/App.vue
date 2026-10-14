@@ -13,6 +13,21 @@ import { useSyncStore } from './stores/sync'
 import { getApiBaseUrl } from './auth/api'
 import { version, commit, branch, buildDate } from './version'
 
+// Responsive Layout-Umschaltung: <html data-layout="mobile|desktop">.
+// CSS nutzt das, um Bottom-Nav, FAB und Mobile-spezifische Helfer zu zeigen/verbergen.
+const layoutModus = ref<'mobile' | 'desktop'>('desktop')
+
+function aktualisiereLayout(): void {
+  const istSchmal = window.matchMedia('(max-width: 720px)').matches
+  layoutModus.value = istSchmal ? 'mobile' : 'desktop'
+  document.documentElement.setAttribute('data-layout', layoutModus.value)
+}
+
+let mql: MediaQueryList | null = null
+function onMqlChange(): void {
+  aktualisiereLayout()
+}
+
 const { t } = useI18n()
 const router = useRouter()
 const route = useRoute()
@@ -80,6 +95,9 @@ onMounted(() => {
     projekt.start()
     audit.start()
   }
+  aktualisiereLayout()
+  mql = window.matchMedia('(max-width: 720px)')
+  mql.addEventListener('change', onMqlChange)
   window.addEventListener('online', onOnline)
   window.addEventListener('offline', onOffline)
   window.addEventListener('click', onDocumentClick)
@@ -92,6 +110,7 @@ onBeforeUnmount(() => {
   buchung.stop()
   projekt.stop()
   audit.stop()
+  if (mql) mql.removeEventListener('change', onMqlChange)
   window.removeEventListener('online', onOnline)
   window.removeEventListener('offline', onOffline)
   window.removeEventListener('click', onDocumentClick)
@@ -129,6 +148,38 @@ function abmelden(): void {
 
 const versionLabel = `v${version} · ${commit}`
 const buildDateFormatiert = new Date(buildDate).toLocaleString()
+const repoUrl = 'https://github.com/icem0/bma-lager'
+const versionString = `bma-lager v${version} (commit ${commit}, branch ${branch}, built ${buildDateFormatiert}) · MIT · ${repoUrl}`
+
+const copyStatus = ref<'idle' | 'ok' | 'fehler'>('idle')
+let copyResetTimer: ReturnType<typeof setTimeout> | null = null
+
+async function copyVersion(): Promise<void> {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(versionString)
+    } else {
+      const ta = document.createElement('textarea')
+      ta.value = versionString
+      ta.setAttribute('readonly', '')
+      ta.style.position = 'absolute'
+      ta.style.left = '-9999px'
+      document.body.appendChild(ta)
+      ta.select()
+      const ok = document.execCommand('copy')
+      document.body.removeChild(ta)
+      if (!ok) throw new Error('execCommand(copy) fehlgeschlagen')
+    }
+    copyStatus.value = 'ok'
+  } catch {
+    copyStatus.value = 'fehler'
+  } finally {
+    if (copyResetTimer !== null) clearTimeout(copyResetTimer)
+    copyResetTimer = setTimeout(() => {
+      copyStatus.value = 'idle'
+    }, 2000)
+  }
+}
 
 // ---------- DB-Sync Indikator ----------
 
@@ -257,7 +308,6 @@ function formatRelativ(iso: string | null): string {
       <nav>
         <RouterLink to="/">{{ t('app.nav.dashboard') }}</RouterLink>
         <RouterLink to="/artikel">{{ t('app.nav.artikel') }}</RouterLink>
-        <RouterLink to="/scan" title="Barcode-Scan">📷</RouterLink>
         <RouterLink to="/buchungen">{{ t('app.nav.buchungen') }}</RouterLink>
         <RouterLink to="/standorte">{{ t('app.nav.standorte') }}</RouterLink>
         <RouterLink to="/einstellungen">{{ t('app.nav.einstellungen') }}</RouterLink>
@@ -310,6 +360,37 @@ function formatRelativ(iso: string | null): string {
       <RouterView />
     </main>
 
+    <!-- Mobile Bottom-Nav + FAB-Scanner.
+         Erscheint nur, wenn data-layout="mobile" gesetzt ist (siehe CSS). -->
+    <nav v-if="auth.istAngemeldet" class="bottom-nav" aria-label="Hauptnavigation">
+      <RouterLink to="/" exact-active-class="active">
+        <span class="bn-icon" aria-hidden="true">⌂</span>
+        <span class="bn-label">{{ t('app.nav.dashboard') }}</span>
+      </RouterLink>
+      <RouterLink to="/artikel" active-class="active">
+        <span class="bn-icon" aria-hidden="true">▦</span>
+        <span class="bn-label">{{ t('app.nav.artikel') }}</span>
+      </RouterLink>
+      <RouterLink to="/scan" class="bn-fab" aria-label="Barcode-Scanner öffnen">
+        <span class="bn-fab-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+            <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
+            <circle cx="12" cy="13" r="4"></circle>
+          </svg>
+        </span>
+        <span class="bn-label">Scan</span>
+      </RouterLink>
+      <RouterLink to="/buchungen" active-class="active">
+        <span class="bn-icon" aria-hidden="true">⇄</span>
+        <span class="bn-label">{{ t('app.nav.buchungen') }}</span>
+      </RouterLink>
+      <RouterLink to="/standorte" active-class="active">
+        <span class="bn-icon" aria-hidden="true">◫</span>
+        <span class="bn-label">{{ t('app.nav.standorte') }}</span>
+      </RouterLink>
+    </nav>
+
     <div v-if="versionOffen" class="version-panel" role="dialog">
       <h2>Build-Info</h2>
       <dl class="meta">
@@ -334,7 +415,77 @@ function formatRelativ(iso: string | null): string {
         Zum Reproduzieren:
         <code>git checkout {{ commit }}</code>
       </p>
-      <button type="button" @click="closeVersion">Schließen</button>
+      <p class="version-footer">
+        by
+        <a
+          :href="repoUrl"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="version-footer-link"
+        >icem0</a>
+        ·
+        <a
+          :href="repoUrl"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="version-footer-link"
+        >github.com/icem0/bma-lager</a>
+        · MIT-Lizenz
+      </p>
+      <div class="version-actions">
+        <button
+          type="button"
+          class="copy-btn"
+          :class="`state-${copyStatus}`"
+          :title="copyStatus === 'ok' ? 'Kopiert' : versionString"
+          :aria-label="copyStatus === 'ok' ? 'Kopiert' : 'Build-Info in die Zwischenablage kopieren'"
+          @click="copyVersion"
+        >
+          <svg
+            v-if="copyStatus === 'idle'"
+            class="icon"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+          </svg>
+          <svg
+            v-else-if="copyStatus === 'ok'"
+            class="icon"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <polyline points="20 6 9 17 4 12"></polyline>
+          </svg>
+          <svg
+            v-else
+            class="icon"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="12" y1="8" x2="12" y2="12"></line>
+            <line x1="12" y1="16" x2="12.01" y2="16"></line>
+          </svg>
+        </button>
+        <button type="button" @click="closeVersion">Schließen</button>
+      </div>
     </div>
 
     <div v-if="syncPanelOffen" class="sync-panel" role="dialog" aria-label="DB-Sync-Status">
@@ -915,8 +1066,163 @@ function formatRelativ(iso: string | null): string {
   font-size: 0.8rem;
 }
 
+.version-panel .version-footer {
+  margin: 0 0 0.75rem;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.version-panel .version-footer-link {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.version-panel .version-footer-link:hover {
+  text-decoration: underline;
+}
+
+.version-panel .version-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-top: 0.5rem;
+}
+
+.version-panel .version-actions button {
+  padding: 0.45rem 0.7rem;
+  font-size: 0.8rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-input);
+  color: var(--text);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.version-panel .version-actions button:hover {
+  background: var(--bg-card);
+  border-color: var(--accent-border);
+  color: var(--text-strong);
+}
+
+.version-panel .version-actions .copy-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  padding: 0;
+  font-family: var(--mono);
+  color: var(--text-muted);
+}
+
+.version-panel .version-actions .copy-btn:hover {
+  color: var(--text-strong);
+}
+
+.version-panel .version-actions .copy-btn .icon {
+  width: 1.05rem;
+  height: 1.05rem;
+  display: block;
+}
+
+.version-panel .version-actions .copy-btn.state-ok {
+  color: var(--accent);
+  border-color: var(--accent-border);
+}
+
+.version-panel .version-actions .copy-btn.state-fehler {
+  color: #e35d6a;
+  border-color: #e35d6a;
+}
+
 main {
   flex: 1;
+}
+
+/* ============================================================
+   Mobile Bottom-Nav
+   ============================================================ */
+.bottom-nav {
+  display: none;
+}
+
+:root[data-layout='mobile'] .app-header {
+  /* Auf Mobile nur Brand + Theme + Sync — Rest wandert in Bottom-Nav/Profil. */
+  padding: 0.6rem 0.85rem;
+}
+:root[data-layout='mobile'] .app-header nav {
+  display: none;
+}
+:root[data-layout='mobile'] .user-chip .user-email {
+  display: none;
+}
+:root[data-layout='mobile'] .version-badge {
+  display: none;
+}
+
+:root[data-layout='mobile'] .bottom-nav {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  align-items: stretch;
+  background: var(--bg-card);
+  border-top: 1px solid var(--border);
+  padding: 0.35rem 0.25rem calc(0.35rem + env(safe-area-inset-bottom));
+  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.18);
+}
+:root[data-layout='mobile'] .bottom-nav a {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.15rem;
+  text-decoration: none;
+  color: var(--text-muted);
+  border-radius: var(--radius-sm);
+  padding: 0.35rem 0.25rem;
+  font-size: 0.72rem;
+  font-weight: 500;
+  min-height: 2.75rem;
+}
+:root[data-layout='mobile'] .bottom-nav a.active {
+  color: var(--accent);
+}
+:root[data-layout='mobile'] .bottom-nav a .bn-icon {
+  font-size: 1.15rem;
+  line-height: 1;
+}
+:root[data-layout='mobile'] .bottom-nav a.bn-fab {
+  background: var(--accent);
+  color: white;
+  margin: -0.85rem 0.25rem 0;
+  border-radius: 1rem;
+  font-weight: 600;
+  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);
+  position: relative;
+}
+:root[data-layout='mobile'] .bottom-nav a.bn-fab .bn-fab-icon {
+  width: 1.65rem;
+  height: 1.65rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+:root[data-layout='mobile'] .bottom-nav a.bn-fab svg {
+  width: 100%;
+  height: 100%;
+  stroke: white;
+  fill: none;
+}
+:root[data-layout='mobile'] .bottom-nav a.bn-fab:hover {
+  background: var(--accent-hover);
+  text-decoration: none;
+  color: white;
 }
 
 @media (max-width: 720px) {

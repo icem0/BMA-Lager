@@ -125,6 +125,10 @@ export default {
         speichern: 'Save',
         abbrechen: 'Cancel',
       },
+      filter: {
+        archivierteAnzeigen: 'Show archived',
+      },
+      wiederherstellen: 'Restore',
       leer: 'No locations yet.',
     },
     settings: {
