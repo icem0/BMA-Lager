@@ -17,4 +17,6 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           config-file: .release-please-config.json
-          manifest-file: .release-please-manifest.json
+          # Kein manifest-file: das Repo ist ein einzelnes Package (PWA-Root
+          # package.json). manifest-file ist nur fuer Monorepos gedacht und
+          # loest hier sonst 'versionString.match is not a function' aus.
