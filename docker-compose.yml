@@ -3,26 +3,27 @@
 # Startet das System:
 #   - PostgreSQL (persistent via Volume pgdata)
 #   - API (Fastify, Node 22) — Port 3000
-#   - PWA (nginx) — Port 8080
+#   - PWA (nginx) — Port 80
 #
 # KEIN Tunnel, KEIN Reverse-Proxy im Stack.
 # Wenn du TLS / Domain brauchst, kümmerst du dich extern darum — z. B. mit
 # nginx, Caddy, Traefik oder einem Cloud-Loadbalancer vor diesem Stack.
 #
-# Start:    docker compose up -d          # baut api/pwa lokal und startet den Stack
-# Update:   docker compose up -d --build  # baut neu und startet den Stack
-# Logs:     docker compose logs -f api
+# Images:
+#   api / pwa / migrate / bootstrap werden direkt von GitHub Container Registry
+#   (GHCR) als `ghcr.io/icem0/bma-lager-{api,pwa}:latest` referenziert.
+#   Der CI-Workflow `.github/workflows/build-and-push.yml` baut und pusht
+#   diese Images bei jedem Push auf `main`. `migrate` und `bootstrap` sind
+#   Entry-Points desselben API-Images.
+#
+# Start:   docker compose up -d          # zieht Images von GHCR, startet den Stack
+# Update:  docker compose pull && docker compose up -d
+# Logs:    docker compose logs -f api
 #
 # Voraussetzung: .env-Datei (siehe .env.example).
-#
-# Images:
-#   api / pwa / migrate / bootstrap werden LOKAL aus den mitgelieferten
-#   Dockerfiles gebaut (siehe `build:`-Direktiven unten). Es ist KEIN
-#   Container-Registry-Zugriff nötig — weder GHCR, noch sonst irgendwas.
-#   So funktioniert `docker compose up -d` auf jeder frischen Maschine,
-#   auch hinter Firewalls, in Arcane/Coolify oder ohne GHCR-Token.
-#   Wenn du für Production dennoch vorgebaute GHCR-Images nutzen willst,
-#   bleibt der CI-Workflow `.github/workflows/build-and-push.yml` aktiv.
+# Falls die GHCR-Pakete privat sind: ein GHCR-PAT mit Scope `read:packages`
+# in der Deployer-Registry konfigurieren (Arcane: `POST /container-registries`).
+# Für öffentliche Images reicht kein Token.
 
 services:
   db:
@@ -44,9 +45,7 @@ services:
     networks: [internal]
 
   api:
-    build:
-      context: ./server
-      dockerfile: Dockerfile
+    image: ghcr.io/icem0/bma-lager-api:latest
     restart: unless-stopped
     depends_on:
       db:
@@ -86,9 +85,7 @@ services:
     networks: [internal]
 
   pwa:
-    build:
-      context: .
-      dockerfile: Dockerfile.pwa
+    image: ghcr.io/icem0/bma-lager-pwa:latest
     restart: unless-stopped
     depends_on: [api]
     ports:
@@ -98,9 +95,7 @@ services:
   # Einmaliger Job: Migration ausfuehren.
   # Aufruf: docker compose --profile migrate up
   migrate:
-    build:
-      context: ./server
-      dockerfile: Dockerfile
+    image: ghcr.io/icem0/bma-lager-api:latest
     profiles: ["migrate"]
     depends_on:
       db:
@@ -117,9 +112,7 @@ services:
   # Einmaliger Job: Initial-Admin aus .env anlegen.
   # Aufruf: docker compose --profile bootstrap up
   bootstrap:
-    build:
-      context: ./server
-      dockerfile: Dockerfile
+    image: ghcr.io/icem0/bma-lager-api:latest
     profiles: ["bootstrap"]
     depends_on:
       migrate:

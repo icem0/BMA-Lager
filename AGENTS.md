@@ -29,9 +29,10 @@ Regeln für alle Coding-Agents und Entwickler, die an diesem Projekt arbeiten.
 
 ## Build & Deployment
 
-- **Default-Workflow ist Self-Host-Build.** `docker-compose.yml` definiert für `api`, `pwa`, `migrate` und `bootstrap` jeweils `build:`-Direktiven (statt `image:`). `docker compose up -d` baut diese Images beim ersten Start automatisch **lokal** aus den mitgelieferten Dockerfiles. Kein vorheriger `docker pull`, kein Registry-Login, keine GHCR-Credentials nötig.
-- **Arcane / Coolify / bare Docker**: funktioniert ohne Anpassung. Arcane z. B. triggert den Build über seinen `POST /projects/{id}/build`-Endpoint — die `build:`-Direktive greift dort direkt. Coolify erkennt `build:` ebenfalls nativ.
-- **GHCR-Production-Pfad bleibt erhalten.** Der CI-Workflow `.github/workflows/build-and-push.yml` pusht weiterhin bei jedem `main`-Push Images nach `ghcr.io/icem0/bma-lager-{api,pwa}`. Wer für Production vorgebaute Images nutzen will, kann sie dort abholen — der `docker-compose.yml`-Default wird dadurch **nicht** gebrochen.
-- **Update-Workflow**: `git pull && docker compose up -d --build` (nicht `docker compose pull` — es gibt keine externen Images mehr).
-- **Lockfiles pro Paket**: `package-lock.json` im Root (PWA), `server/package-lock.json` (API). Beide müssen in ihrem jeweiligen Verzeichnis für `npm ci` liegen — beim Dockerfile-Build übernimmt das `COPY package.json package-lock.json* ./` im jeweiligen Stage.
-- **Dockerfile-Pfade in `build:`**: bei Subdir-Dockerfiles `context: ./server, dockerfile: Dockerfile` verwenden — **nicht** `dockerfile: ./server/Dockerfile`, das schlägt fehl.
+- **Images kommen aus GHCR.** `docker-compose.yml` referenziert `api`, `pwa`, `migrate` und `bootstrap` hartkodiert als `ghcr.io/icem0/bma-lager-{api,pwa}:latest`. **Kein** `build:`-Block, **kein** Variablen-Override. Deployer ziehen die Images — fertig.
+- **`migrate` und `bootstrap`** sind Entry-Points desselben API-Images (`node dist/db/migrate.js` / `node dist/cli/bootstrap-admin.js`). Es wird also nicht für jeden Job ein eigenes Image gebaut.
+- **CI-Workflow** `.github/workflows/build-and-push.yml` baut bei Push auf `main` (oder Tag `v*`) die Images und pusht sie mit Tag `:latest` **und** mit dem SHA-Tag. Bei Pull-Requests wird **nur** gebaut, nicht gepusht (Gate `if: github.event_name != 'pull_request'`). Sichtbarkeit wird per `PATCH /user/packages/container/{pkg}` auf `public` gesetzt.
+- **GHCR-Token**: Für private Pakete braucht der Deployer einen GitHub-PAT mit Scope `read:packages`. Bare Docker / Coolify: `docker login ghcr.io`. Arcane: einmalig `POST /container-registries` mit dem PAT. Für öffentliche Pakete reicht kein Token.
+- **Arcane / Coolify / bare Docker** funktionieren ohne Anpassung — sie alle ziehen `image:`-Referenzen transparent. Der frühere `build:`-Pfad ist absichtlich entfernt.
+- **Update-Workflow**: `git pull && docker compose pull && docker compose up -d` (nicht `--build` — es gibt nichts Lokales zu bauen).
+- **Lockfiles pro Paket**: `package-lock.json` im Root (PWA), `server/package-lock.json` (API). Beide müssen in ihrem jeweiligen Verzeichnis für `npm ci` liegen — beim CI-Build übernimmt das `working-directory` bzw. `cache-dependency-path`.

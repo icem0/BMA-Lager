@@ -174,7 +174,7 @@ Jede Buchung hat eine unveränderliche `id` (UUID) und `erstelltAm`-Zeitstempel.
 
 Die Container `bma-lager-api` (Port 4242) und `bma-lager-pwa` (Port 4280) werden **direkt am Host exponiert**. Wenn du TLS, eine Domain oder eine Firewall brauchst, kümmerst du dich **extern** darum — z. B. mit einem nginx, Caddy, Traefik, HAProxy, oder einem Cloud-Loadbalancer, der auf 4242/4280 proxied. In diesem Repo wird kein Reverse-Proxy mitgeliefert.
 
-**Default-Workflow: clone + `.env` + `docker compose up -d` reicht.** Die Images für `api`, `pwa`, `migrate` und `bootstrap` werden lokal aus den mitgelieferten Dockerfiles gebaut (`build:`-Direktive in `docker-compose.yml`). Es ist **kein** Container-Registry-Login und **kein** vorheriger `docker pull` nötig — funktioniert auf einer frischen Maschine, in Arcane, Coolify oder bare Docker gleichermaßen.
+**Default-Workflow: clone + `.env` + `docker compose up -d` reicht.** Die Images werden direkt von GitHub Container Registry bezogen — `docker-compose.yml` referenziert sie hartkodiert als `ghcr.io/icem0/bma-lager-api:latest` bzw. `…-pwa:latest` (für `migrate`/`bootstrap` wird dasselbe API-Image mit anderem Entrypoint verwendet). Der CI-Workflow [`.github/workflows/build-and-push.yml`](./.github/workflows/build-and-push.yml) baut und pusht diese Tags bei jedem Merge auf `main`.
 
 ```bash
 # 1) Repo klonen
@@ -189,22 +189,29 @@ $EDITOR .env  # DB-Password, JWT-Secret, Admin-Daten, Domain-Configs
 docker compose --profile migrate up
 docker compose --profile bootstrap up
 
-# 4) Stack hochfahren (baut api/pwa beim ersten Start automatisch lokal)
+# 4) Stack hochfahren (zieht Images von GHCR, startet den Stack)
 docker compose up -d
 
 # 5) Update-Workflow nach jedem neuen Release
 cd /opt/bma-lager
 git pull origin main
-docker compose up -d --build   # baut neu und startet den Stack
+docker compose pull && docker compose up -d   # zieht neue :latest-Tags, startet neu
 ```
 
-Fertig. Keine GHCR-Token, keine Registry-Credentials, keine separaten Build-Befehle.
+Fertig. Funktioniert auf einer frischen Maschine, in Arcane, Coolify oder bare Docker gleichermaßen — es wird **kein** GHCR-Login, **kein** vorheriger Build und **kein** Source-Workspace im Deployer benötigt.
 
-#### Optional: vorgebaute GHCR-Images (Production-Workflow)
+#### Voraussetzung: GHCR-Images existieren
 
-Für Production-Setups, die lieber auf vorgebaute Images aus GitHub Container Registry zurückgreifen wollen, baut und publiziert der CI-Workflow [`build-and-push.yml`](./.github/workflows/build-and-push.yml) bei jedem Push auf `main` automatisch Images nach `ghcr.io/icem0/bma-lager-{api,pwa}`. Das ist ein **optionaler** Pfad — der Default-Workflow oben funktioniert ohne ihn.
+Die Tags `ghcr.io/icem0/bma-lager-api:latest` und `…-pwa:latest` müssen in GHCR vorhanden sein. Sie werden vom CI-Workflow automatisch bei jedem Push auf `main` erzeugt und überschrieben. Für einen frischen Fork muss also zuerst einmal `main` gepusht werden (oder ein Maintainer mit Package-Schreibrechten), bevor der Deployer ziehen kann.
 
-Wer diesen Pfad in einem Self-Host-Setup trotzdem nutzen will (z. B. weil die Build-Maschine langsam ist), kann die Images vorab pullen und dann mit `image:` statt `build:` starten — dafür muss `docker-compose.yml` lokal angepasst werden. Für Arcane/Coolify wird das **nicht** empfohlen: dort funktioniert der Default-Workflow deutlich reibungsloser, weil der Build-Endpoint des Hosters (`POST /projects/{id}/build`) ohnehin lokale Dockerfiles erwartet.
+#### Private GHCR-Pakete
+
+Sind die GHCR-Pakete privat (Default für neue Repos), braucht der Deployer einen GitHub-Personal-Access-Token mit Scope `read:packages`:
+
+- **Bare Docker / Coolify**: `echo $TOKEN | docker login ghcr.io -u $USER --password-stdin` vor `docker compose pull`.
+- **Arcane**: Container-Registry einmalig per `POST /container-registries` mit dem PAT hinterlegen — danach zieht der Deployer transparent.
+
+Für **öffentliche** Pakete reicht kein Token. Die Images dieses Repos werden vom CI-Workflow per `PATCH /user/packages/container/{pkg}` explizit auf `public` gesetzt; der Status lässt sich unter `https://github.com/icem0?tab=packages` prüfen.
 
 ### Was hier **nicht** enthalten ist
 
