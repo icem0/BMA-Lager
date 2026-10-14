@@ -11,6 +11,7 @@ import { useAuditStore } from './stores/audit'
 import { useAuthStore } from './stores/auth'
 import { useSyncStore } from './stores/sync'
 import { getApiBaseUrl } from './auth/api'
+import { clearAppCacheAndReload } from './services/sync/clear-cache'
 import { version, commit, branch, buildDate } from './version'
 
 // Responsive Layout-Umschaltung: <html data-layout="mobile|desktop">.
@@ -210,6 +211,35 @@ async function manuellSync(): Promise<void> {
   await ladeSyncDetail()
 }
 
+// ---------- Cache löschen ----------
+
+type CacheResetPhase = 'idle' | 'bestaetigen' | 'laufend' | 'fehler'
+const cacheResetPhase = ref<CacheResetPhase>('idle')
+const cacheResetFehler = ref<string | null>(null)
+
+function cacheResetFrageStarten(): void {
+  cacheResetPhase.value = 'bestaetigen'
+  cacheResetFehler.value = null
+}
+
+function cacheResetAbbrechen(): void {
+  cacheResetPhase.value = 'idle'
+  cacheResetFehler.value = null
+}
+
+async function cacheResetBestaetigen(): Promise<void> {
+  cacheResetPhase.value = 'laufend'
+  cacheResetFehler.value = null
+  try {
+    await clearAppCacheAndReload()
+    // Erfolg führt zum Reload — wenn nicht, fallen wir zurück in 'idle'.
+    cacheResetPhase.value = 'idle'
+  } catch (e) {
+    cacheResetFehler.value = e instanceof Error ? e.message : String(e)
+    cacheResetPhase.value = 'fehler'
+  }
+}
+
 function zaehleAbweichungen(
   l: { artikel: number; standorte: number; projekte: number; buchungen: number } | null,
   s: { artikel: number; standorte: number; projekte: number; buchungen: number } | null,
@@ -309,7 +339,6 @@ function formatRelativ(iso: string | null): string {
         <RouterLink to="/">{{ t('app.nav.dashboard') }}</RouterLink>
         <RouterLink to="/artikel">{{ t('app.nav.artikel') }}</RouterLink>
         <RouterLink to="/buchungen">{{ t('app.nav.buchungen') }}</RouterLink>
-        <RouterLink to="/standorte">{{ t('app.nav.standorte') }}</RouterLink>
         <RouterLink to="/einstellungen">{{ t('app.nav.einstellungen') }}</RouterLink>
       </nav>
       <div class="header-right">
@@ -384,10 +413,6 @@ function formatRelativ(iso: string | null): string {
       <RouterLink to="/buchungen" active-class="active">
         <span class="bn-icon" aria-hidden="true">⇄</span>
         <span class="bn-label">{{ t('app.nav.buchungen') }}</span>
-      </RouterLink>
-      <RouterLink to="/standorte" active-class="active">
-        <span class="bn-icon" aria-hidden="true">◫</span>
-        <span class="bn-label">{{ t('app.nav.standorte') }}</span>
       </RouterLink>
     </nav>
 
@@ -610,7 +635,48 @@ function formatRelativ(iso: string | null): string {
         >
           {{ sync.triggering ? 'Synchronisiere…' : 'Jetzt synchronisieren' }}
         </button>
+        <button
+          type="button"
+          :disabled="cacheResetPhase === 'laufend'"
+          @click="cacheResetFrageStarten"
+        >
+          Cache leeren
+        </button>
         <button type="button" @click="closeSyncPanel">Schließen</button>
+      </div>
+
+      <div v-if="cacheResetPhase !== 'idle'" class="sync-cache-confirm" role="alertdialog">
+        <p>
+          <strong>Service-Worker-Cache wirklich leeren?</strong>
+        </p>
+        <p class="sync-cache-confirm-detail">
+          Die App lädt danach alle Dateien neu vom Server. Deine Buchungen und der Login
+          bleiben erhalten (liegen in der Browser-Datenbank bzw. localStorage). Die Seite
+          wird neu geladen.
+        </p>
+        <p
+          v-if="cacheResetPhase === 'fehler' && cacheResetFehler"
+          class="wert-fehler"
+        >
+          {{ cacheResetFehler }}
+        </p>
+        <div class="sync-panel-actions">
+          <button
+            type="button"
+            class="danger"
+            :disabled="cacheResetPhase === 'laufend'"
+            @click="cacheResetBestaetigen"
+          >
+            {{ cacheResetPhase === 'laufend' ? 'Leere Cache…' : 'Ja, leeren' }}
+          </button>
+          <button
+            type="button"
+            :disabled="cacheResetPhase === 'laufend'"
+            @click="cacheResetAbbrechen"
+          >
+            Abbrechen
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -998,9 +1064,33 @@ function formatRelativ(iso: string | null): string {
 .sync-panel-actions button.primary:hover:not(:disabled) {
   filter: brightness(1.08);
 }
+.sync-panel-actions button.danger {
+  background: var(--danger);
+  color: white;
+  border-color: var(--danger);
+}
+.sync-panel-actions button.danger:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
 .sync-panel-actions button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.sync-cache-confirm {
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.sync-cache-confirm p {
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+}
+.sync-cache-confirm-detail {
+  color: var(--text-muted);
+  font-size: 0.78rem !important;
 }
 
 .version-badge {
