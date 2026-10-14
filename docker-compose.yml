@@ -9,18 +9,20 @@
 # Wenn du TLS / Domain brauchst, kümmerst du dich extern darum — z. B. mit
 # nginx, Caddy, Traefik oder einem Cloud-Loadbalancer vor diesem Stack.
 #
-# Start:    docker compose up -d
-# Update:   docker compose pull && docker compose up -d
+# Start:    docker compose up -d          # baut api/pwa lokal und startet den Stack
+# Update:   docker compose up -d --build  # baut neu und startet den Stack
 # Logs:     docker compose logs -f api
 #
 # Voraussetzung: .env-Datei (siehe .env.example).
 #
 # Images:
-#   Standard ist `${BMA_IMAGE_REPO:-ghcr.io/icem0/bma-lager}-{api|pwa}:latest`.
-#   Wenn das Pullen fehlschlaegt (z. B. weil das Image noch nicht gebaut
-#   wurde oder der Aufrufer keinen GHCR-Zugriff hat), baut `docker compose`
-#   automatisch lokal aus den Dockerfiles — das macht den Stack fuer jeden
-#   clone-bar, auch ohne Registry-Login.
+#   api / pwa / migrate / bootstrap werden LOKAL aus den mitgelieferten
+#   Dockerfiles gebaut (siehe `build:`-Direktiven unten). Es ist KEIN
+#   Container-Registry-Zugriff nötig — weder GHCR, noch sonst irgendwas.
+#   So funktioniert `docker compose up -d` auf jeder frischen Maschine,
+#   auch hinter Firewalls, in Arcane/Coolify oder ohne GHCR-Token.
+#   Wenn du für Production dennoch vorgebaute GHCR-Images nutzen willst,
+#   bleibt der CI-Workflow `.github/workflows/build-and-push.yml` aktiv.
 
 services:
   db:
@@ -42,7 +44,6 @@ services:
     networks: [internal]
 
   api:
-    image: ${BMA_IMAGE_REPO:-ghcr.io/icem0/bma-lager}-api:latest
     build:
       context: ./server
       dockerfile: Dockerfile
@@ -85,7 +86,6 @@ services:
     networks: [internal]
 
   pwa:
-    image: ${BMA_IMAGE_REPO:-ghcr.io/icem0/bma-lager}-pwa:latest
     build:
       context: .
       dockerfile: Dockerfile.pwa
@@ -98,7 +98,6 @@ services:
   # Einmaliger Job: Migration ausfuehren.
   # Aufruf: docker compose --profile migrate up
   migrate:
-    image: ${BMA_IMAGE_REPO:-ghcr.io/icem0/bma-lager}-api:latest
     build:
       context: ./server
       dockerfile: Dockerfile
@@ -118,7 +117,6 @@ services:
   # Einmaliger Job: Initial-Admin aus .env anlegen.
   # Aufruf: docker compose --profile bootstrap up
   bootstrap:
-    image: ${BMA_IMAGE_REPO:-ghcr.io/icem0/bma-lager}-api:latest
     build:
       context: ./server
       dockerfile: Dockerfile

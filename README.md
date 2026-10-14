@@ -173,6 +173,8 @@ Jede Buchung hat eine unveränderliche `id` (UUID) und `erstelltAm`-Zeitstempel.
 
 Die Container `bma-lager-api` (Port 4242) und `bma-lager-pwa` (Port 4280) werden **direkt am Host exponiert**. Wenn du TLS, eine Domain oder eine Firewall brauchst, kümmerst du dich **extern** darum — z. B. mit einem nginx, Caddy, Traefik, HAProxy, oder einem Cloud-Loadbalancer, der auf 4242/4280 proxied. In diesem Repo wird kein Reverse-Proxy mitgeliefert.
 
+**Default-Workflow: clone + `.env` + `docker compose up -d` reicht.** Die Images für `api`, `pwa`, `migrate` und `bootstrap` werden lokal aus den mitgelieferten Dockerfiles gebaut (`build:`-Direktive in `docker-compose.yml`). Es ist **kein** Container-Registry-Login und **kein** vorheriger `docker pull` nötig — funktioniert auf einer frischen Maschine, in Arcane, Coolify oder bare Docker gleichermaßen.
+
 ```bash
 # 1) Repo klonen
 git clone https://github.com/icem0/bma-lager.git /opt/bma-lager
@@ -182,25 +184,26 @@ cd /opt/bma-lager
 cp .env.example .env
 $EDITOR .env  # DB-Password, JWT-Secret, Admin-Daten, Domain-Configs
 
-# 3) GHCR-Login ist nicht nötig. Die Images unter
-#    ghcr.io/icem0/bma-lager-{api,pwa} sind public, und falls das Pullen
-#    trotzdem mal fehlschlägt, baut `docker compose` automatisch lokal
-#    aus den mitgelieferten Dockerfiles. Es ist also kein
-#    Registry-Login nötig, um den Stack zu starten.
-
-# 4) Initial: Migration + Bootstrap-Admin
+# 3) Initial: Migration + Bootstrap-Admin
 docker compose --profile migrate up
 docker compose --profile bootstrap up
 
-# 5) Stack hochfahren
+# 4) Stack hochfahren (baut api/pwa beim ersten Start automatisch lokal)
 docker compose up -d
 
-# 6) Update-Workflow nach jedem neuen Release
+# 5) Update-Workflow nach jedem neuen Release
 cd /opt/bma-lager
 git pull origin main
-docker compose pull
-docker compose up -d
+docker compose up -d --build   # baut neu und startet den Stack
 ```
+
+Fertig. Keine GHCR-Token, keine Registry-Credentials, keine separaten Build-Befehle.
+
+#### Optional: vorgebaute GHCR-Images (Production-Workflow)
+
+Für Production-Setups, die lieber auf vorgebaute Images aus GitHub Container Registry zurückgreifen wollen, baut und publiziert der CI-Workflow [`build-and-push.yml`](./.github/workflows/build-and-push.yml) bei jedem Push auf `main` automatisch Images nach `ghcr.io/icem0/bma-lager-{api,pwa}`. Das ist ein **optionaler** Pfad — der Default-Workflow oben funktioniert ohne ihn.
+
+Wer diesen Pfad in einem Self-Host-Setup trotzdem nutzen will (z. B. weil die Build-Maschine langsam ist), kann die Images vorab pullen und dann mit `image:` statt `build:` starten — dafür muss `docker-compose.yml` lokal angepasst werden. Für Arcane/Coolify wird das **nicht** empfohlen: dort funktioniert der Default-Workflow deutlich reibungsloser, weil der Build-Endpoint des Hosters (`POST /projects/{id}/build`) ohnehin lokale Dockerfiles erwartet.
 
 ### Was hier **nicht** enthalten ist
 
