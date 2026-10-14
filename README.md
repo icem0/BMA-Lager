@@ -33,13 +33,12 @@ Mobile-First-Lager für Werkstatt und Baustelle. Funktioniert offline, synct wen
 | 🧮 **Inventur mit Defizit-Buchung** | Soll-Erfassung erzeugt automatisch Differenz-Buchung |
 | 📲 **PWA installierbar** | iOS, Android, Desktop — auch ohne App-Store |
 | 🔐 **JWT-Auth** | Server-Authoritative, Offline-Cache für Token-Ablauf |
-| 🌐 **Cloudflare-Tunnel** | Kein offener Port am Host, Zero-Trust-fähig |
 
 ## Tech-Stack
 
 **Frontend (PWA):** Vue 3 · Vite · TypeScript · Pinia · Dexie · Vue I18n · Workbox · ZXing
 **Backend:** Node 22 · Fastify · Drizzle ORM · Postgres 16 · argon2 · JWT
-**DevOps:** Docker · Docker Compose · Caddy · Cloudflare Tunnel · GitHub Actions → GHCR
+**DevOps:** Docker · Docker Compose · GitHub Actions → GHCR
 
 ---
 
@@ -129,25 +128,26 @@ npm install
 │       │      │  (Push + Pull, 30s) │                     │
 │       │      └─────────────────────┘                     │
 └──────│──────────────────────────────────────────────────┘
-       │ HTTPS
+       │  HTTP/HTTPS
        ▼
 ┌──────────────────────────────────────────┐
-│   Cloudflare-Tunnel (kein offener Port)  │
+│  Externer Reverse-Proxy (nginx, Caddy,   │
+│  Cloudflare, HAProxy, …) — nicht im     │
+│  Repo, nicht im docker-compose.yml      │
 └─────────────────┬────────────────────────┘
-                  ▼
-┌──────────────────────────────────────────┐
-│       Caddy (Reverse-Proxy, Port 80)     │
-└─────┬──────────────────┬─────────────────┘
-      │ /api/*, /fotos/*  │ /
-      ▼                   ▼
-┌──────────┐         ┌──────────┐
-│ Fastify  │   ←→    │ nginx    │
-│  (API)   │         │  (PWA)   │
-└────┬─────┘         └──────────┘
+                  │ Plain HTTP (internes Netz)
+       ┌──────────┴──────────┐
+       │ /api/*, /fotos/*   │ /
+       ▼                     ▼
+┌──────────┐           ┌──────────┐
+│ Fastify  │    ←→     │ nginx    │
+│  (API)   │           │  (PWA)   │
+│ Port 3000│           │ Port 80  │
+└────┬─────┘           └──────────┘
      │
 ┌────▼────────┐
 │ PostgreSQL  │
-└────────────┘
+└─────────────┘
 ```
 
 ### Datenmodell (vereinfacht)
@@ -169,18 +169,18 @@ Jede Buchung hat eine unveränderliche `id` (UUID) und `erstelltAm`-Zeitstempel.
 
 ## Deployment
 
-### Vollständige Production-Story mit Docker-Compose + Cloudflare-Tunnel
+### Docker-Compose (ohne Tunnel, ohne Reverse-Proxy im Stack)
 
-Siehe [deployment.md](./docs/deployment.md) für die komplette Anleitung. Kurzfassung:
+Die Container `bma-lager-api` (Port 3000) und `bma-lager-pwa` (Port 8080) werden **direkt am Host exponiert**. Wenn du TLS, eine Domain oder eine Firewall brauchst, kümmerst du dich **extern** darum — z. B. mit einem nginx, Caddy, Traefik, HAProxy, oder einem Cloud-Loadbalancer, der auf 3000/8080 proxied. In diesem Repo wird kein Reverse-Proxy mitgeliefert.
 
 ```bash
 # 1) Repo klonen
-git clone git@github.com:DEIN-USER/bma-lager.git /opt/bma-lager
+git clone https://github.com/DEIN-USER/bma-lager.git /opt/bma-lager
 cd /opt/bma-lager
 
 # 2) .env ausfüllen
 cp .env.example .env
-# $EDITOR .env — siehe unten
+$EDITOR .env  # GHCR-Owner, DB-Password, JWT-Secret, Admin-Daten, Domain-Configs
 
 # 3) GHCR-Login (einmalig)
 echo "$GHCR_TOKEN" | docker login ghcr.io -u DEIN-USER --password-stdin
@@ -193,38 +193,34 @@ docker compose --profile bootstrap up
 docker compose up -d
 
 # 6) Update-Workflow nach jedem deiner Commits
+cd /opt/bma-lager
 git pull origin main
 docker compose pull
 docker compose up -d
 ```
 
-### `.env.example` (Kurzfassung)
+### Was hier **nicht** enthalten ist
 
-```bash
-# GHCR-Owner
-GITHUB_REPOSITORY_OWNER=DEIN-USER
+- **Kein Reverse-Proxy** (Caddy, nginx, Traefik, …) — du nutzt deinen eigenen vor dem Stack
+- **Kein Cloudflare-Tunnel** — wenn du den willst, läuft er als eigener Container/Service auf deinem Host, separat von diesem Compose
+- **Keine TLS-Terminierung** — wenn der Stack direkt ins Internet zeigt, brauchst du dringend einen TLS-Proxy davor
 
-# Datenbank
-DB_PASSWORD=$(openssl rand -base64 24)
+### TLS / HTTPS vor dem Stack
 
-# Auth
-JWT_SECRET=$(openssl rand -hex 32)
-ADMIN_EMAIL=admin@example.com
-ADMIN_PASSWORD=$(openssl rand -base64 16)
+Der einfachste Weg ist ein einzelner nginx auf dem Host (nicht in diesem Compose):
 
-# Domain
-COOKIE_DOMAIN=bma-lager.example.com
-CORS_ORIGIN=https://bma-lager.example.com
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name bma-lager.example.com;
+    ssl_certificate /etc/letsencrypt/live/.../fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/.../privkey.pem;
 
-# Cloudflare-Tunnel
-CLOUDFLARE_TUNNEL_TOKEN=...
+    location /api/ { proxy_pass http://127.0.0.1:3000; }
+    location /fotos/ { proxy_pass http://127.0.0.1:3000; }
+    location / { proxy_pass http://127.0.0.1:8080; }
+}
 ```
-
-### Architektur-Optionen
-
-- **Standard**: Cloudflare-Tunnel (kein offener Port, Zero-Trust-ready)
-- **Alternativ**: Caddy mit Let's Encrypt, eigenen Reverse-Proxy nutzen
-- **Failover**: zweiter `docker-compose.prod-caddy.yml` als Backup-Pfad
 
 ---
 
@@ -351,8 +347,7 @@ bma-lager/
 ├── .github/workflows/        # CI: Lint, Test, Build, Push zu GHCR
 ├── Dockerfile.pwa            # PWA-Container (nginx)
 ├── nginx-pwa.conf            # nginx-Konfig
-├── docker-compose.yml        # Komplette Prod-Stack
-├── Caddyfile                 # Reverse-Proxy
+├── docker-compose.yml        # Komplette Prod-Stack (PWA + API + DB, direkt am Host)
 └── .env.example              # Prod-Env-Vorlage
 ```
 
