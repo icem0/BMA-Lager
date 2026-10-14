@@ -66,22 +66,33 @@ jobs:
 
       - name: Set package visibility to public
         if: github.event_name != 'pull_request'
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
         run: |
-          set -e
+          set +e
           for pkg in bma-lager-api; do
-            status=$(curl -sS -o /tmp/resp.json -w "%{http_code}" \
-              -X PATCH \
-              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/user/packages/container/${pkg}" \
-              -d '{"visibility":"public"}')
-            echo "PATCH /user/packages/container/${pkg} -> ${status}"
-            cat /tmp/resp.json
-            echo
-            if [ "${status}" != "200" ] && [ "${status}" != "404" ]; then
-              echo "::warning::Unexpected status ${status} setting ${pkg} to public"
-            fi
+            for endpoint in \
+              "https://api.github.com/repos/${OWNER}/${REPO}/packages/container/${pkg}" \
+              "https://api.github.com/users/${OWNER}/packages/container/${pkg}" \
+              "https://api.github.com/user/packages/container/${pkg}"; do
+              echo "::group::PATCH ${endpoint}"
+              status=$(curl -sS -o /tmp/resp.json -w "%{http_code}" \
+                -X PATCH \
+                -H "Authorization: Bearer ${TOKEN}" \
+                -H "Accept: application/vnd.github+json" \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                "${endpoint}" \
+                -d '{"visibility":"public"}')
+              echo "status=${status}"
+              cat /tmp/resp.json; echo
+              echo "::endgroup::"
+              if [ "${status}" = "200" ]; then
+                echo "visibility set to public via ${endpoint}"
+                break
+              fi
+            done
           done
 
   # ---------- PWA ----------
@@ -137,20 +148,31 @@ jobs:
 
       - name: Set package visibility to public
         if: github.event_name != 'pull_request'
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
         run: |
-          set -e
+          set +e
           for pkg in bma-lager-pwa; do
-            status=$(curl -sS -o /tmp/resp.json -w "%{http_code}" \
-              -X PATCH \
-              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/user/packages/container/${pkg}" \
-              -d '{"visibility":"public"}')
-            echo "PATCH /user/packages/container/${pkg} -> ${status}"
-            cat /tmp/resp.json
-            echo
-            if [ "${status}" != "200" ] && [ "${status}" != "404" ]; then
-              echo "::warning::Unexpected status ${status} setting ${pkg} to public"
-            fi
+            for endpoint in \
+              "https://api.github.com/repos/${OWNER}/${REPO}/packages/container/${pkg}" \
+              "https://api.github.com/users/${OWNER}/packages/container/${pkg}" \
+              "https://api.github.com/user/packages/container/${pkg}"; do
+              echo "::group::PATCH ${endpoint}"
+              status=$(curl -sS -o /tmp/resp.json -w "%{http_code}" \
+                -X PATCH \
+                -H "Authorization: Bearer ${TOKEN}" \
+                -H "Accept: application/vnd.github+json" \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                "${endpoint}" \
+                -d '{"visibility":"public"}')
+              echo "status=${status}"
+              cat /tmp/resp.json; echo
+              echo "::endgroup::"
+              if [ "${status}" = "200" ]; then
+                echo "visibility set to public via ${endpoint}"
+                break
+              fi
+            done
           done
