@@ -22,6 +22,23 @@ Regeln für alle Coding-Agents und Entwickler, die an diesem Projekt arbeiten.
   - `npm test`
 - Build muss sauber durchlaufen: `npm run build`.
 
+## Commits & Versionierung
+
+- **Conventional Commits sind Pflicht.** Commit-Messages folgen dem Format
+  `<type>(<scope>)?: <subject>` (siehe `commitlint.config.mjs`). Husky
+  blockiert nicht-konforme Messages lokal (`commit-msg`-Hook).
+- **Erlaubte Typen**: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`,
+  `test`, `build`, `ci`, `chore`, `revert`. `feat!`/`BREAKING CHANGE:` für
+  Major-Bumps.
+- **release-please** (`.github/workflows/release-please.yml`) öffnet bei
+  jedem Push auf `main` einen Release-PR, der `package.json` + `CHANGELOG.md`
+  bumpt und das passende `vX.Y.Z`-Tag erzeugt.
+  - Vor `1.0.0`: `feat` → minor, `fix` → patch (`bump-minor-pre-major`).
+  - Ab `1.0.0`: Semver strikt (`feat` → minor, `fix` → patch, Breaking → major).
+- **`build-and-push.yml`** baut das PWA- und API-Image bei Push auf `main`
+  **und** bei Tag `v*` — der `v*`-Trigger sorgt dafür, dass auch nach
+  Release-PRs ein frisches Image mit der neuen Version gepusht wird.
+
 ## Sicherheit
 
 - **Keine Secrets im Code.** API-Keys, Tokens, Passwörter und private Konfiguration gehören in `.env` (nicht eingecheckt) oder werden zur Laufzeit vom Benutzer eingegeben.

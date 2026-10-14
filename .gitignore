@@ -12,6 +12,8 @@ dist
 dist-ssr
 # Auto-generiert durch scripts/write-version.mjs
 src/version.ts
+# Husky interner Ordner (von `husky` zur Laufzeit angelegt)
+.husky/_
 *.local
 .env
 .env.*

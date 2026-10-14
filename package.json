@@ -15,12 +15,16 @@
     "format": "prettier --write \"src/**/*.{ts,vue,css,json}\"",
     "test": "vitest",
     "test:run": "vitest run",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "prepare": "husky"
   },
   "dependencies": {
     "@zxing/browser": "^0.2.1",
+    "@commitlint/cli": "^19.6.0",
+    "@commitlint/config-conventional": "^19.6.0",
     "browser-image-compression": "^2.0.2",
     "dexie": "^4.0.10",
+    "husky": "^9.1.7",
     "pinia": "^2.3.0",
     "vue": "^3.5.42",
     "vue-i18n": "^11.0.0",
