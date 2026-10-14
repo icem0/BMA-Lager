@@ -1,6 +1,7 @@
 // Artikel-Store: lädt die `artikel`-Tabelle reaktiv via Dexie liveQuery.
 // Stellt Suche/Filter bereit; Mutationen (anlegen/ändern/archivieren) hier,
 // weil Artikel kein Buchungs-Fachobjekt sind und keine Domain-Schicht haben.
+// Schreiboperationen befüllen die Outbox für den Server-Sync.
 
 import { defineStore } from 'pinia'
 import { liveQuery, type Subscription } from 'dexie'
@@ -8,6 +9,7 @@ import { computed, ref, onScopeDispose } from 'vue'
 import { getDb } from '../db/database'
 import type { Artikel, ArtikelStatus, NachbestellHinweis } from '../db/types'
 import { neueUuid, jetztIso } from '../domain/ids'
+import { queueOp } from '../services/sync/worker'
 
 export interface ArtikelEingabe {
   titel: string
@@ -76,12 +78,6 @@ export const useArtikelStore = defineStore('artikel', () => {
     })
   })
 
-  const typen = computed<string[]>(() => {
-    const s = new Set<string>()
-    for (const a of artikel.value) s.add(a.typ)
-    return Array.from(s).sort()
-  })
-
   function setFilter(next: ArtikelFilter): void {
     filter.value = next
   }
@@ -92,6 +88,7 @@ export const useArtikelStore = defineStore('artikel', () => {
       id: neueUuid(),
       sharePointId: e.sharePointId ?? null,
       foto: e.foto ?? null,
+      fotoUrls: e.foto ? [e.foto] : [],
       titel: e.titel,
       status: e.status ?? 'verfuegbar',
       typ: e.typ,
@@ -106,21 +103,57 @@ export const useArtikelStore = defineStore('artikel', () => {
       archiviert: false,
     }
     await getDb().artikel.add(a)
+    await queueOp('artikel', 'create', a)
     return a
   }
 
+  /** Hängt eine Foto-URL an einen Artikel an (z. B. nach Server-Upload). */
+  async function fotoHinzufuegen(artikelId: string, url: string): Promise<void> {
+    const a = await getDb().artikel.get(artikelId)
+    if (!a) throw new Error(`Artikel ${artikelId} nicht gefunden`)
+    const urls = a.fotoUrls ?? []
+    if (urls.includes(url)) return
+    const updated: Artikel = {
+      ...a,
+      fotoUrls: [...urls, url],
+      geaendertAm: jetztIso(),
+    }
+    await getDb().artikel.put(updated)
+    await queueOp('artikel', 'update', updated)
+  }
+
+  /** Entfernt eine Foto-URL. */
+  async function fotoEntfernen(artikelId: string, url: string): Promise<void> {
+    const a = await getDb().artikel.get(artikelId)
+    if (!a) return
+    const updated: Artikel = {
+      ...a,
+      fotoUrls: (a.fotoUrls ?? []).filter((u) => u !== url),
+      geaendertAm: jetztIso(),
+    }
+    await getDb().artikel.put(updated)
+    await queueOp('artikel', 'update', updated)
+  }
+
   async function aktualisieren(id: string, patch: Partial<Artikel>): Promise<void> {
-    await getDb().artikel.update(id, { ...patch, geaendertAm: jetztIso() })
+    const a = await getDb().artikel.get(id)
+    if (!a) throw new Error(`Artikel ${id} nicht gefunden`)
+    const updated: Artikel = { ...a, ...patch, geaendertAm: jetztIso() }
+    await getDb().artikel.put(updated)
+    await queueOp('artikel', 'update', updated)
   }
 
   async function archivieren(id: string): Promise<void> {
-    await getDb().artikel.update(id, { archiviert: true, geaendertAm: jetztIso() })
+    const a = await getDb().artikel.get(id)
+    if (!a) return
+    const updated: Artikel = { ...a, archiviert: true, geaendertAm: jetztIso() }
+    await getDb().artikel.put(updated)
+    await queueOp('artikel', 'update', updated)
   }
 
   return {
     artikel,
     gefiltert,
-    typen,
     filter,
     geladen,
     start,
@@ -130,5 +163,7 @@ export const useArtikelStore = defineStore('artikel', () => {
     anlegen,
     aktualisieren,
     archivieren,
+    fotoHinzufuegen,
+    fotoEntfernen,
   }
 })

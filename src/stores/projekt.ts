@@ -5,7 +5,8 @@ import { liveQuery, type Subscription } from 'dexie'
 import { ref, onScopeDispose } from 'vue'
 import { getDb } from '../db/database'
 import type { Projekt } from '../db/types'
-import { neueUuid } from '../domain/ids'
+import { neueUuid, jetztIso } from '../domain/ids'
+import { queueOp } from '../services/sync/worker'
 
 export interface ProjektEingabe {
   nummer: string
@@ -46,18 +47,25 @@ export const useProjektStore = defineStore('projekt', () => {
   }
 
   async function anlegen(e: ProjektEingabe): Promise<Projekt> {
+    const now = jetztIso()
     const p: Projekt = {
       id: neueUuid(),
       nummer: e.nummer,
       name: e.name ?? null,
       archiviert: false,
+      geaendertAm: now,
+      erstelltAm: now,
     }
     await getDb().projekte.add(p)
+    await queueOp('projekt', 'create', p)
     return p
   }
 
   async function archivieren(id: string): Promise<void> {
-    await getDb().projekte.update(id, { archiviert: true })
+    const now = jetztIso()
+    await getDb().projekte.update(id, { archiviert: true, geaendertAm: now })
+    const updated = await getDb().projekte.get(id)
+    if (updated) await queueOp('projekt', 'update', updated)
   }
 
   return { projekte, geladen, start, stop, byNummer, anlegen, archivieren }

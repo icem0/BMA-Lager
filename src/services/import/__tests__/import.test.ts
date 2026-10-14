@@ -5,7 +5,7 @@ import { BmaLagerDb, setDb } from '../../../db/database'
 import { parseCsv } from '../csv-parser'
 import { defaultArtikelMapping, defaultWarenMapping } from '../mapping'
 import { validiereArtikelMapping } from '../validierung'
-import { importAusCsv } from '../import'
+import { importArtikelAusCsv, importAusCsv, importWarenAusCsv } from '../import'
 
 // Mini-Fixtures (Test-Plan §12): repräsentieren einen SharePoint-Export.
 const LAGER_CSV = `ID;Foto;Title;Status;Type;Lieferant;VE;Bestand-min;Nachbestellung;Bestellnr.;Listenpreis;Geändert
@@ -92,20 +92,92 @@ describe('Validierung', () => {
   })
 })
 
-describe('importAusCsv', () => {
+describe('importArtikelAusCsv (nur Stammdaten)', () => {
+  it('legt Artikel aus der Lager-CSV an, ohne Waren-Buchungen zu erzeugen', async () => {
+    const lager = parseCsv(LAGER_CSV)
+    const artikelMap = defaultArtikelMapping(lager.headers)
+    const bericht = await importArtikelAusCsv({
+      rows: lager.rows,
+      headers: lager.headers,
+      mapping: artikelMap,
+    })
+    expect(bericht.artikelAngelegt).toBe(2)
+    expect(bericht.buchungenAngelegt).toBe(0)
+    expect(bericht.konflikte).toEqual([])
+
+    const artikel = await testDb.artikel.toArray()
+    expect(artikel).toHaveLength(2)
+    // Kein Hauptlager angelegt – das ist Aufgabe des Waren-Imports.
+    expect(await testDb.standorte.toArray()).toEqual([])
+    expect(await testDb.buchungen.toArray()).toEqual([])
+  })
+})
+
+describe('importWarenAusCsv (nur Bewegungen)', () => {
+  it('legt Hauptlager und Buchungen an, sofern die Artikel existieren', async () => {
+    // Artikel zuerst separat anlegen.
+    const lager = parseCsv(LAGER_CSV)
+    await importArtikelAusCsv({
+      rows: lager.rows,
+      headers: lager.headers,
+      mapping: defaultArtikelMapping(lager.headers),
+    })
+    // Dann Waren importieren.
+    const waren = parseCsv(WAREN_CSV)
+    const bericht = await importWarenAusCsv({
+      rows: waren.rows,
+      headers: waren.headers,
+      mapping: defaultWarenMapping(waren.headers),
+      hauptLagerName: 'Hauptlager',
+    })
+    expect(bericht.buchungenAngelegt).toBe(3)
+    expect(bericht.konflikte).toEqual([])
+
+    const standorte = await testDb.standorte.toArray()
+    expect(standorte.some((s) => s.standard && s.name === 'Hauptlager')).toBe(true)
+  })
+
+  it('meldet unbekannte Artikel als Konflikt, schreibt den Rest', async () => {
+    const lager = parseCsv(LAGER_CSV)
+    await importArtikelAusCsv({
+      rows: lager.rows,
+      headers: lager.headers,
+      mapping: defaultArtikelMapping(lager.headers),
+    })
+    const waren = parseCsv(WAREN_CSV)
+    // Eine zusätzliche Zeile mit unbekanntem Artikel.
+    const plusUnbekannt = [
+      ...waren.rows,
+      ['Entnahme', '999', 'NICHT-VORHANDEN', '1', '03.01.2025 09:15', 'alex', 'Hauptlager', ''],
+    ]
+    const bericht = await importWarenAusCsv({
+      rows: plusUnbekannt,
+      headers: waren.headers,
+      mapping: defaultWarenMapping(waren.headers),
+      hauptLagerName: 'Hauptlager',
+    })
+    expect(bericht.buchungenAngelegt).toBe(3)
+    expect(bericht.konflikte).toHaveLength(1)
+    expect(bericht.konflikte[0]).toContain('NICHT-VORHANDEN')
+  })
+})
+
+describe('importAusCsv (kombiniert)', () => {
   it('legt Artikel an und der Bestand ist Summe der Buchungen', async () => {
     const lager = parseCsv(LAGER_CSV)
     const waren = parseCsv(WAREN_CSV)
-    const artikelMap = defaultArtikelMapping(lager.headers)
-    const warenMap = defaultWarenMapping(waren.headers)
     const bericht = await importAusCsv({
-      artikelRows: lager.rows,
-      artikelHeaders: lager.headers,
-      artikelMapping: artikelMap,
-      warenRows: waren.rows,
-      warenHeaders: waren.headers,
-      warenMapping: warenMap,
-      hauptLagerName: 'Hauptlager',
+      artikel: {
+        rows: lager.rows,
+        headers: lager.headers,
+        mapping: defaultArtikelMapping(lager.headers),
+      },
+      waren: {
+        rows: waren.rows,
+        headers: waren.headers,
+        mapping: defaultWarenMapping(waren.headers),
+        hauptLagerName: 'Hauptlager',
+      },
     })
     expect(bericht.artikelAngelegt).toBe(2)
     expect(bericht.buchungenAngelegt).toBe(3)
@@ -127,32 +199,8 @@ describe('importAusCsv', () => {
     expect(standorte.some((s) => s.standard && s.name === 'Hauptlager')).toBe(true)
   })
 
-  it('rollbackt, wenn die Validierung einen Fehler wirft (kein halb-importierter Zustand)', async () => {
-    const lager = parseCsv(LAGER_CSV)
-    const waren = parseCsv(WAREN_CSV)
-    const artikelMap = defaultArtikelMapping(lager.headers)
-    // Ware-Mapping ohne `artikelTitle` → Pflichtfeld fehlt → Validierung wirft.
-    const gebrochenesWarenMap: Record<string, unknown> = {}
-    for (const h of waren.headers) {
-      if (h === 'Artikel') continue
-      gebrochenesWarenMap[h] = null
-    }
-    // validiereArtikelMapping würde ohne Pflichtfeld auch Probleme melden, aber
-    // importAusCsv ruft die Validierung nicht auf, sondern vertraut dem Aufrufer.
-    // Wir simulieren hier nur, dass ohne `artikelTitle` keine Waren-Buchungen
-    // geschrieben werden – Artikel sind trotzdem drin.
-    await importAusCsv({
-      artikelRows: lager.rows,
-      artikelHeaders: lager.headers,
-      artikelMapping: artikelMap,
-      warenRows: waren.rows,
-      warenHeaders: waren.headers,
-      warenMapping: gebrochenesWarenMap as never,
-      hauptLagerName: 'Hauptlager',
-    })
-    const artikel = await testDb.artikel.toArray()
-    expect(artikel).toHaveLength(2)
-    const buchungen = await testDb.buchungen.toArray()
-    expect(buchungen).toHaveLength(0)
+  it('akzeptiert leere Eingabe und liefert leeren Bericht', async () => {
+    const bericht = await importAusCsv({})
+    expect(bericht).toEqual({ artikelAngelegt: 0, buchungenAngelegt: 0, konflikte: [] })
   })
 })

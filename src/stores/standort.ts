@@ -6,7 +6,8 @@ import { liveQuery, type Subscription } from 'dexie'
 import { computed, ref, onScopeDispose } from 'vue'
 import { getDb } from '../db/database'
 import type { Standort, StandortTyp } from '../db/types'
-import { neueUuid } from '../domain/ids'
+import { neueUuid, jetztIso } from '../domain/ids'
+import { queueOp } from '../services/sync/worker'
 
 export interface StandortEingabe {
   name: string
@@ -70,6 +71,8 @@ export const useStandortStore = defineStore('standort', () => {
       kennzeichen: e.kennzeichen ?? null,
       standard: e.standard ?? false,
       archiviert: false,
+      geaendertAm: jetztIso(),
+      erstelltAm: jetztIso(),
     }
     await getDb().transaction('rw', getDb().standorte, async () => {
       if (s.standard) {
@@ -79,20 +82,27 @@ export const useStandortStore = defineStore('standort', () => {
       }
       await getDb().standorte.add(s)
     })
+    await queueOp('standort', 'create', s)
     return s
   }
 
   async function setStandard(id: string): Promise<void> {
+    const now = jetztIso()
     await getDb().transaction('rw', getDb().standorte, async () => {
       await getDb()
         .standorte.filter((x) => x.standard === true)
-        .modify({ standard: false })
-      await getDb().standorte.update(id, { standard: true })
+        .modify({ standard: false, geaendertAm: now })
+      await getDb().standorte.update(id, { standard: true, geaendertAm: now })
     })
+    const updated = await getDb().standorte.get(id)
+    if (updated) await queueOp('standort', 'update', updated)
   }
 
   async function archivieren(id: string): Promise<void> {
-    await getDb().standorte.update(id, { archiviert: true, standard: false })
+    const now = jetztIso()
+    await getDb().standorte.update(id, { archiviert: true, standard: false, geaendertAm: now })
+    const updated = await getDb().standorte.get(id)
+    if (updated) await queueOp('standort', 'update', updated)
   }
 
   return {

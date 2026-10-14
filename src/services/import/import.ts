@@ -1,6 +1,11 @@
-// CSV-Import-Orchestrator.
-// Nimmt zwei Parse-Ergebnisse (Lager + Warenfluss) plus Mappings und schreibt
-// sie atomar in eine Dexie-Transaktion. Bei Fehler vollständiger Rollback.
+// CSV-Import-Pipeline.
+//
+// Drei Eintrittspunkte:
+//   - importArtikelAusCsv(...)   – nur Stammdaten (Lager-CSV)
+//   - importWarenAusCsv(...)     – nur Bewegungen (Warenfluss-CSV), Artikel müssen existieren
+//   - importAusCsv(...)          – kombiniert beide in einer Transaktion (für Erstimport)
+//
+// Bei Validierungs-/Konfliktfehlern wird die jeweilige Transaktion zurückgerollt.
 
 import { getDb } from '../../db/database'
 import type { Artikel, Buchung } from '../../db/types'
@@ -20,8 +25,6 @@ export interface ImportBericht {
   artikelAngelegt: number
   buchungenAngelegt: number
   konflikte: string[]
-  /** Wenn gesetzt, ist der Import abgebrochen worden. */
-  fehler?: string
 }
 
 interface ArtikelCacheEintrag {
@@ -30,22 +33,59 @@ interface ArtikelCacheEintrag {
   titelLower: string
 }
 
-export interface ImportEingabe {
-  artikelRows: string[][]
-  artikelHeaders: string[]
-  artikelMapping: ArtikelMapping
-  warenRows: string[][]
-  warenHeaders: string[]
-  warenMapping: WarenMapping
-  /** Name des Haupt-Standorts (Lager), an den Waren ohne Standort-Zuordnung gebucht werden. */
+export interface ArtikelImportEingabe {
+  rows: string[][]
+  headers: string[]
+  mapping: ArtikelMapping
+}
+
+export interface WarenImportEingabe {
+  rows: string[][]
+  headers: string[]
+  mapping: WarenMapping
+  /** Name des Haupt-Standorts, an den Buchungen ohne Standort-Zuordnung gehen. */
   hauptLagerName: string
 }
 
 /**
- * Importiert in einer Dexie-Transaktion.
- * Wirft bei Validierungs-/Konfliktfehlern – dann ist die DB unverändert.
+ * Stellt sicher, dass der Haupt-Standort existiert und als Standard markiert ist.
+ * Erwartet, innerhalb einer bereits laufenden `db.transaction('rw', [..., db.standorte, ...])` aufgerufen zu werden.
  */
-export async function importAusCsv(e: ImportEingabe): Promise<ImportBericht> {
+async function stelleHauptLagerSicher(name: string): Promise<string> {
+  const db = getDb()
+  const vorhanden = (await db.standorte.filter((s) => s.name === name).toArray())[0]
+  if (vorhanden) {
+    if (!vorhanden.standard) {
+      await db.standorte.update(vorhanden.id, { standard: true })
+    }
+    return vorhanden.id
+  }
+  const now = jetztIso()
+  const neu = {
+    id: neueUuid(),
+    name,
+    typ: 'lager' as const,
+    projekt: null,
+    kennzeichen: null,
+    standard: true,
+    archiviert: false,
+    geaendertAm: now,
+    erstelltAm: now,
+  }
+  await db.standorte.add(neu)
+  await db.auditLog.add({
+    id: neueUuid(),
+    aktion: 'csv-import.lager-autocreate',
+    entitaet: 'standort',
+    entitaetId: neu.id,
+    daten: JSON.stringify(neu),
+    zeit: jetztIso(),
+  })
+  return neu.id
+}
+
+/** Importiert nur Artikel-Stammdaten aus einer Lager-CSV. */
+export async function importArtikelAusCsv(e: ArtikelImportEingabe): Promise<ImportBericht> {
   const db = getDb()
   const bericht: ImportBericht = {
     artikelAngelegt: 0,
@@ -53,32 +93,11 @@ export async function importAusCsv(e: ImportEingabe): Promise<ImportBericht> {
     konflikte: [],
   }
 
-  await db.transaction('rw', [db.artikel, db.standorte, db.buchungen, db.auditLog], async () => {
-    // 1. Hauptlager sicherstellen.
-    let lagerRecord = (await db.standorte.filter((s) => s.name === e.hauptLagerName).toArray())[0]
-    if (!lagerRecord) {
-      lagerRecord = {
-        id: neueUuid(),
-        name: e.hauptLagerName,
-        typ: 'lager',
-        projekt: null,
-        kennzeichen: null,
-        standard: true,
-        archiviert: false,
-      }
-      await db.standorte.add(lagerRecord)
-    } else if (!lagerRecord.standard) {
-      await db.standorte.update(lagerRecord.id, { standard: true })
-    }
-
-    // 2. Artikel anlegen.
-    const artikelByTitle = new Map<string, ArtikelCacheEintrag>()
-
-    for (let i = 0; i < e.artikelRows.length; i++) {
-      const row = e.artikelRows[i]
+  await db.transaction('rw', [db.artikel, db.auditLog], async () => {
+    for (let i = 0; i < e.rows.length; i++) {
+      const row = e.rows[i]
       if (!row) continue
-      const a: Artikel = mappeArtikelZeile(row, e.artikelHeaders, e.artikelMapping)
-      // Deduplizierung über sharePointId ODER Titel (innerhalb derer CSV).
+      const a: Artikel = mappeArtikelZeile(row, e.headers, e.mapping)
       const existierend =
         a.sharePointId != null
           ? await db.artikel.where('sharePointId').equals(a.sharePointId).first()
@@ -89,6 +108,39 @@ export async function importAusCsv(e: ImportEingabe): Promise<ImportBericht> {
       }
       await db.artikel.add(a)
       bericht.artikelAngelegt += 1
+    }
+
+    await db.auditLog.add({
+      id: neueUuid(),
+      aktion: 'csv-import.artikel',
+      entitaet: 'artikel',
+      entitaetId: 'batch',
+      daten: JSON.stringify({
+        artikelAngelegt: bericht.artikelAngelegt,
+        konflikte: bericht.konflikte.length,
+      }),
+      zeit: jetztIso(),
+    })
+  })
+
+  return bericht
+}
+
+/** Importiert nur Waren-Buchungen. Artikel müssen bereits existieren. */
+export async function importWarenAusCsv(e: WarenImportEingabe): Promise<ImportBericht> {
+  const db = getDb()
+  const bericht: ImportBericht = {
+    artikelAngelegt: 0,
+    buchungenAngelegt: 0,
+    konflikte: [],
+  }
+
+  await db.transaction('rw', [db.artikel, db.standorte, db.buchungen, db.auditLog], async () => {
+    const fallbackStandortId = await stelleHauptLagerSicher(e.hauptLagerName)
+
+    const artikelByTitle = new Map<string, ArtikelCacheEintrag>()
+    const alle = await db.artikel.toArray()
+    for (const a of alle) {
       const eintrag: ArtikelCacheEintrag = {
         id: a.id,
         sharePointId: a.sharePointId,
@@ -97,7 +149,89 @@ export async function importAusCsv(e: ImportEingabe): Promise<ImportBericht> {
       artikelByTitle.set(eintrag.titelLower, eintrag)
     }
 
-    // Auch: bereits in DB vorhandene Artikel (über sharePointId) für Warenfluss-Lookup.
+    for (let i = 0; i < e.rows.length; i++) {
+      const row = e.rows[i]
+      if (!row) continue
+      const b = mappeWarenZeile(row, e.headers, e.mapping, artikelByTitle, fallbackStandortId)
+      if (!b) {
+        const titelRaw = (() => {
+          const h = e.headers.find((x) => e.mapping[x] === 'artikelTitle')
+          return h ? (row[e.headers.indexOf(h)] ?? '').trim() : ''
+        })()
+        bericht.konflikte.push(`Zeile ${i + 2}: Artikel "${titelRaw}" nicht gefunden.`)
+        continue
+      }
+      await db.buchungen.add(b)
+      bericht.buchungenAngelegt += 1
+    }
+
+    await db.auditLog.add({
+      id: neueUuid(),
+      aktion: 'csv-import.waren',
+      entitaet: 'buchung',
+      entitaetId: 'batch',
+      daten: JSON.stringify({
+        buchungenAngelegt: bericht.buchungenAngelegt,
+        konflikte: bericht.konflikte.length,
+      }),
+      zeit: jetztIso(),
+    })
+  })
+
+  return bericht
+}
+
+export interface ImportEingabe {
+  artikel?: ArtikelImportEingabe
+  waren?: WarenImportEingabe
+}
+
+/**
+ * Kombi-Import: nimmt optional Artikel und/oder Waren entgegen.
+ * Schreibt alles in einer Transaktion; bei Fehler vollständiger Rollback.
+ * Wenn beide leer sind, ist der Aufruf ein No-op und liefert leeren Bericht.
+ */
+export async function importAusCsv(e: ImportEingabe): Promise<ImportBericht> {
+  const db = getDb()
+  const bericht: ImportBericht = {
+    artikelAngelegt: 0,
+    buchungenAngelegt: 0,
+    konflikte: [],
+  }
+  if (!e.artikel && !e.waren) return bericht
+
+  await db.transaction('rw', [db.artikel, db.standorte, db.buchungen, db.auditLog], async () => {
+    let fallbackStandortId: string | null = null
+    if (e.waren) {
+      fallbackStandortId = await stelleHauptLagerSicher(e.waren.hauptLagerName)
+    }
+
+    const artikelByTitle = new Map<string, ArtikelCacheEintrag>()
+
+    if (e.artikel) {
+      for (let i = 0; i < e.artikel.rows.length; i++) {
+        const row = e.artikel.rows[i]
+        if (!row) continue
+        const a: Artikel = mappeArtikelZeile(row, e.artikel.headers, e.artikel.mapping)
+        const existierend =
+          a.sharePointId != null
+            ? await db.artikel.where('sharePointId').equals(a.sharePointId).first()
+            : await db.artikel.where('titel').equals(a.titel).first()
+        if (existierend) {
+          bericht.konflikte.push(`Artikel "${a.titel}" existiert bereits (Zeile ${i + 2}).`)
+          continue
+        }
+        await db.artikel.add(a)
+        bericht.artikelAngelegt += 1
+        const eintrag: ArtikelCacheEintrag = {
+          id: a.id,
+          sharePointId: a.sharePointId,
+          titelLower: a.titel.toLowerCase(),
+        }
+        artikelByTitle.set(eintrag.titelLower, eintrag)
+      }
+    }
+
     const vorhandene = await db.artikel.toArray()
     for (const a of vorhandene) {
       const eintrag: ArtikelCacheEintrag = {
@@ -110,19 +244,34 @@ export async function importAusCsv(e: ImportEingabe): Promise<ImportBericht> {
       }
     }
 
-    // 3. Waren-Buchungen anlegen.
-    for (let i = 0; i < e.warenRows.length; i++) {
-      const row = e.warenRows[i]
-      if (!row) continue
-      const b = mappeWarenZeile(row, e.warenHeaders, e.warenMapping, artikelByTitle, lagerRecord.id)
-      if (!b) continue
-      await db.buchungen.add(b)
-      bericht.buchungenAngelegt += 1
+    if (e.waren && fallbackStandortId) {
+      for (let i = 0; i < e.waren.rows.length; i++) {
+        const row = e.waren.rows[i]
+        if (!row) continue
+        const b = mappeWarenZeile(
+          row,
+          e.waren.headers,
+          e.waren.mapping,
+          artikelByTitle,
+          fallbackStandortId,
+        )
+        if (!b) {
+          const titelRaw = (() => {
+            if (!e.waren) return ''
+            const h = e.waren.headers.find((x) => e.waren && e.waren.mapping[x] === 'artikelTitle')
+            return h ? (row[e.waren.headers.indexOf(h)] ?? '').trim() : ''
+          })()
+          bericht.konflikte.push(`Zeile ${i + 2}: Artikel "${titelRaw}" nicht gefunden.`)
+          continue
+        }
+        await db.buchungen.add(b)
+        bericht.buchungenAngelegt += 1
+      }
     }
 
     await db.auditLog.add({
       id: neueUuid(),
-      aktion: 'csv-import',
+      aktion: 'csv-import.kombi',
       entitaet: 'artikel',
       entitaetId: 'batch',
       daten: JSON.stringify({
@@ -144,10 +293,12 @@ function mappeArtikelZeile(row: string[], headers: string[], mapping: ArtikelMap
     if (!h) return ''
     return row[headers.indexOf(h)] ?? ''
   }
+  const foto = feld('foto') || null
   return {
     id: neueUuid(),
     sharePointId: parseInt0(feld('sharePointId')) || null,
-    foto: feld('foto') || null,
+    foto,
+    fotoUrls: foto ? [foto] : [],
     titel: feld('titel'),
     status: normalizeArtikelStatus(feld('status')),
     typ: feld('typ'),
@@ -185,7 +336,6 @@ function mappeWarenZeile(
   const typ = normalizeWarenTyp(feld('typ'))
   const mengeRaw = parseMenge(feld('menge'))
   if (!Number.isFinite(mengeRaw) || mengeRaw === 0) return null
-  // erlaube negative (z. B. Entnahmen als negative Werte), sonst mit Vorzeichen rechnen.
   const mengeVorzeichen = typ === 'entnahme' ? -Math.abs(mengeRaw) : Math.abs(mengeRaw)
 
   return {
@@ -205,5 +355,6 @@ function mappeWarenZeile(
     stornoVon: null,
     storno: false,
     storniertDurch: null,
+    serverId: null,
   }
 }
