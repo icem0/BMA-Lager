@@ -24,11 +24,7 @@ export const useStandortStore = defineStore('standort', () => {
 
   function start() {
     if (subscription) return
-    subscription = liveQuery(() =>
-      getDb()
-        .standorte.filter((s) => !s.archiviert)
-        .toArray(),
-    ).subscribe({
+    subscription = liveQuery(() => getDb().standorte.toArray()).subscribe({
       next: (rows) => {
         standorte.value = rows
         geladen.value = true
@@ -47,6 +43,7 @@ export const useStandortStore = defineStore('standort', () => {
   onScopeDispose(stop)
 
   const aktive = computed(() => standorte.value.filter((s) => !s.archiviert))
+  const archivierte = computed(() => standorte.value.filter((s) => s.archiviert))
   const standardlager = computed(() => aktive.value.find((s) => s.standard) ?? null)
   const nachTyp = computed(() => {
     const m = new Map<StandortTyp, Standort[]>()
@@ -105,9 +102,17 @@ export const useStandortStore = defineStore('standort', () => {
     if (updated) await queueOp('standort', 'update', updated)
   }
 
+  async function wiederherstellen(id: string): Promise<void> {
+    const now = jetztIso()
+    await getDb().standorte.update(id, { archiviert: false, geaendertAm: now })
+    const updated = await getDb().standorte.get(id)
+    if (updated) await queueOp('standort', 'update', updated)
+  }
+
   return {
     standorte,
     aktive,
+    archivierte,
     standardlager,
     nachTyp,
     geladen,
@@ -117,5 +122,6 @@ export const useStandortStore = defineStore('standort', () => {
     anlegen,
     setStandard,
     archivieren,
+    wiederherstellen,
   }
 })
