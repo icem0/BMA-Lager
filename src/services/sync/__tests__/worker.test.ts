@@ -27,7 +27,6 @@ function artikelAnlage(id: string, titel: string): Artikel {
     listenpreis: null,
     geaendertAm: now,
     erstelltAm: now,
-    archiviert: false,
   }
 }
 
@@ -256,6 +255,108 @@ describe('Sync — Status & Counts', () => {
       buchungen: await getDb().buchungen.count(),
     }
     expect(lokal).toEqual({ artikel: 2, standorte: 1, projekte: 0, buchungen: 1 })
+  })
+})
+
+describe('Sync — Push-Markierung (Outbox- vs. Payload-IDs)', () => {
+  beforeEach(() => {
+    setDb(new BmaLagerDb(`bma-lager-test-${Math.random().toString(36).slice(2)}`))
+  })
+
+  it('akzeptierte Payload-IDs markieren die richtigen Outbox-Items (Outbox-IDs != Payload-IDs)', async () => {
+    // Arrange: zwei Artikel in Outbox mit eigenen Outbox-IDs (≠ Domain-UUID).
+    const a1 = artikelAnlage(neueUuid(), 'A1')
+    const a2 = artikelAnlage(neueUuid(), 'A2')
+    await outboxAdd('artikel', 'create', a1)
+    await outboxAdd('artikel', 'create', a2)
+    const outboxItems = await getDb().outbox.toArray()
+    const outboxIds = outboxItems.map((o) => o.id).sort()
+    const payloadIds = [a1.id, a2.id].sort()
+    // Sanity-Check: Outbox-IDs und Payload-IDs sind tatsächlich verschieden.
+    for (const oid of outboxIds) expect(payloadIds).not.toContain(oid)
+
+    // Mock: Server akzeptiert a1, lehnt a2 als Konflikt ab.
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      const method = init?.method ?? 'GET'
+      if (url.endsWith('/api/sync/push') && method === 'POST') {
+        return new Response(
+          JSON.stringify({
+            accepted: [a1.id],
+            conflicts: [{ id: a2.id, reason: 'stale' }],
+            errors: [],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      if (url.includes('/api/sync/snapshot')) {
+        return new Response(
+          JSON.stringify({
+            serverTime: new Date().toISOString(),
+            since: '1970-01-01T00:00:00.000Z',
+            artikel: [],
+            standorte: [],
+            projekte: [],
+            buchungen: [],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      if (url.endsWith('/api/sync/status')) {
+        return new Response(
+          JSON.stringify({
+            serverTime: new Date().toISOString(),
+            counts: { artikel: 0, standorte: 0, projekte: 0, buchungen: 0 },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      return new Response('not found', { status: 404 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    // Act
+    const { runSync } = await import('../worker')
+    await runSync({ token: null, apiBase: 'http://test.local' })
+
+    // Assert
+    const remaining = await getDb().outbox.toArray()
+    const pending = remaining.filter((o) => o.syncedAt === null)
+    const synced = remaining.filter((o) => o.syncedAt !== null)
+
+    // a1 wurde akzeptiert → exakt ein Outbox-Item synced.
+    expect(synced.length).toBe(1)
+    // a2 wurde als Konflikt markiert → bleibt pending, hat aber lastError.
+    expect(pending.length).toBe(1)
+    expect(pending[0]?.lastError).toContain('CONFLICT')
+    expect(pending[0]?.lastError).toContain('stale')
+
+    // Cross-Check: Die synced-Outbox-ID ist die von a1 (nicht eine Payload-UUID).
+    const syncedOutbox = synced[0]?.id
+    expect(syncedOutbox).toBe(
+      outboxItems.find((o) => {
+        const p = JSON.parse(o.payload) as { id: string }
+        return p.id === a1.id
+      })?.id,
+    )
+  })
+
+  it('Netzwerk-Fehler im Push markiert alle Items als failed (lastError gesetzt)', async () => {
+    await outboxAdd('artikel', 'create', artikelAnlage(neueUuid(), 'A1'))
+
+    const fetchMock = vi.fn(async () => {
+      throw new TypeError('Failed to fetch')
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { runSync } = await import('../worker')
+    await runSync({ token: null, apiBase: 'http://test.local' })
+
+    const items = await getDb().outbox.toArray()
+    expect(items.length).toBe(1)
+    expect(items[0]?.syncedAt).toBeNull()
+    expect(items[0]?.attempts).toBe(1)
+    expect(items[0]?.lastError).toContain('Failed to fetch')
   })
 })
 

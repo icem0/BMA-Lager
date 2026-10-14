@@ -241,23 +241,55 @@ export async function runSync(opts: { token: string | null; apiBase: string }): 
     // 1) Push
     const batch = await nextBatch()
     if (batch.length > 0) {
-      const ops = batch.map((o) => {
-        const payload = JSON.parse(o.payload)
-        return { op: o.op, entity: o.entity, payload }
-      })
-      try {
-        const result = await pushOps(apiBase, token, ops)
-        // Alles akzeptiert → syncedAt setzen
-        for (const id of result.accepted) await markSynced(id)
-        // Conflicts → nicht synced, aber auch nicht retried
-        for (const c of result.conflicts) await markFailed(c.id, `CONFLICT: ${c.reason}`)
-        // Errors (z. B. NEGATIVE_BESTAND) → nicht synced, retried nächstes Mal
-        for (const e of result.errors) await markFailed(e.id, `${e.code}: ${e.message}`)
-      } catch (e) {
-        // Gesamter Push fehlgeschlagen (z. B. Netzwerk). Alle markieren.
-        const msg = e instanceof Error ? e.message : String(e)
-        for (const o of batch) await markFailed(o.id, msg)
-        throw e
+      // Wir behalten für jedes Item den Outbox-Eintrag, damit wir hinterher
+      // die richtige outbox.id markieren können. Der Server antwortet mit
+      // `op.payload.id` (Domain-UUID) — nicht mit der Outbox-UUID.
+      const items: Array<{ outboxId: string; payloadId: string }> = []
+      const ops: Array<{ op: OutboxOp; entity: OutboxEintrag['entity']; payload: unknown }> = []
+      for (const o of batch) {
+        let payload: unknown
+        try {
+          payload = JSON.parse(o.payload)
+        } catch (e) {
+          // Korrupte Outbox-Zeile — markieren und überspringen.
+          await markFailed(o.id, `CORRUPT_PAYLOAD: ${e instanceof Error ? e.message : String(e)}`)
+          continue
+        }
+        const payloadId =
+          payload && typeof payload === 'object' && 'id' in payload
+            ? (payload as { id: unknown }).id
+            : undefined
+        if (typeof payloadId !== 'string' || payloadId.length === 0) {
+          await markFailed(o.id, 'MISSING_PAYLOAD_ID')
+          continue
+        }
+        items.push({ outboxId: o.id, payloadId })
+        ops.push({ op: o.op, entity: o.entity, payload })
+      }
+      if (ops.length > 0) {
+        try {
+          const result = await pushOps(apiBase, token, ops)
+          const acceptedIds = new Set(result.accepted)
+          const conflictsById = new Map(result.conflicts.map((c) => [c.id, c.reason]))
+          const errorsById = new Map(result.errors.map((e) => [e.id, `${e.code}: ${e.message}`]))
+          for (const it of items) {
+            if (acceptedIds.has(it.payloadId)) {
+              await markSynced(it.outboxId)
+            } else if (conflictsById.has(it.payloadId)) {
+              await markFailed(it.outboxId, `CONFLICT: ${conflictsById.get(it.payloadId)}`)
+            } else if (errorsById.has(it.payloadId)) {
+              await markFailed(it.outboxId, errorsById.get(it.payloadId) ?? 'ERROR')
+            }
+            // Wenn der Server das Item weder in accepted noch in conflicts/errors
+            // erwähnt, lassen wir es unangetastet — kein Hinweis auf Erfolg oder
+            // Misserfolg, also besser nicht voreilig markieren.
+          }
+        } catch (e) {
+          // Gesamter Push fehlgeschlagen (z. B. Netzwerk). Alle markieren.
+          const msg = e instanceof Error ? e.message : String(e)
+          for (const it of items) await markFailed(it.outboxId, msg)
+          throw e
+        }
       }
     }
 
