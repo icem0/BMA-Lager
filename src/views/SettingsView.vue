@@ -94,6 +94,7 @@ function abmelden(): void {
     <h2>Stammdaten</h2>
     <div class="card quick-links">
       <RouterLink to="/einstellungen/typen">Artikel-Typen verwalten</RouterLink>
+      <RouterLink to="/standorte">{{ t('view.standort.h1') }}</RouterLink>
     </div>
   </section>
 </template>
