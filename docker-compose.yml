@@ -55,36 +55,28 @@ services:
     # Mapping trace->debug2, debug->debug1, info->info, warn->warning,
     # error->error. Bekannte Postgres-GUC-Werte (debug5..panic) werden
     # unveraendert uebernommen. Default ohne beide: warning.
-    command:
+    # Wir starten den Original-Entrypoint docker-entrypoint.sh (initialisiert
+    # den Cluster, wechselt per gosu auf den postgres-User) und reichen die
+    # GUC-Flags als dessen Argumente durch — so bleibt die offizielle
+    # Start-Sequenz intakt.
+    entrypoint:
       - "sh"
       - "-c"
       - >-
-        case "$${PG_LOG_LEVEL:-}" in
-          "") MAPPING_LEVEL="$${LOG_LEVEL:-info}" ;;
-          *)  MAPPING_LEVEL="$$PG_LOG_LEVEL" ;;
-        esac &&
-        case "$$MAPPING_LEVEL" in
-          trace) PG_LVL=debug2 ;;
-          debug) PG_LVL=debug1 ;;
-          info)  PG_LVL=info   ;;
-          warning|warn) PG_LVL=warning ;;
-          error|err)   PG_LVL=error   ;;
-          notice|debug5|debug4|debug3|debug2|debug1|info|warning|error|log|fatal|panic)
-                     PG_LVL="$$MAPPING_LEVEL" ;;
-          *) PG_LVL=warning ;;
-        esac &&
-        case "$$PG_LVL" in
-          debug1|debug2|debug3|debug4|debug5|info|notice)
-            exec postgres
-              -c log_min_messages=$$PG_LVL
-              -c log_statement=all
-              -c log_duration=on
-              -c log_parameter_max_length=64
-              ;;
-          *)
-            exec postgres -c log_min_messages=$$PG_LVL
-              ;;
-        esac
+        M="$${PG_LOG_LEVEL:-$${LOG_LEVEL:-info}}";
+        case "$$M" in
+          trace) P=debug2 ;;
+          debug) P=debug1 ;;
+          info)  P=info   ;;
+          warning|warn) P=warning ;;
+          error|err)   P=error   ;;
+          debug5|debug4|debug3|debug2|debug1|info|notice|warning|error|log|fatal|panic) P="$$M" ;;
+          *) P=warning ;;
+        esac;
+        echo "bma-postgres-logging: PG_LVL=$$P";
+        case "$$P" in
+          debug1|debug2|debug3|debug4|debug5|info|notice) FLAGS="-c log_min_messages=$$P -c log_statement=all -c log_duration=on -c log_parameter_max_length=64" ;; *) FLAGS="-c log_min_messages=$$P" ;; esac;
+        exec docker-entrypoint.sh postgres $$FLAGS
 
   api:
     image: ghcr.io/icem0/bma-lager-api:latest
