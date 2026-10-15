@@ -69,29 +69,91 @@ describe('einstellungen cross-device sync', () => {
     expect(u?.value).toBe('en')
   })
 
-  it('Migration v5: alte Zeilen ohne userId/geaendertAm werden aufgefüllt', async () => {
-    // Wir testen die reine Modify-Logik der v5-upgrade-Funktion. Dexie
-    // selbst kann in fake-indexeddb keine v4-Roh-Zeile mit fehlendem
-    // userId-Index akzeptieren — das Upgrade läuft aber genau auf
-    // dieser Annahme. Wir prüfen die Transform-Funktion isoliert.
-    type Roh = Record<string, unknown>
-    const rohZeile: Roh = { key: 'sprache', value: 'de' }
+  it('Migration v5→v6: alte `einstellungen`-Zeilen landen unter Compound-PK', async () => {
+    // E2E-Test der Dexie-Upgrade-Pipeline. Wir öffnen eine frische
+    // IndexedDB mit dem v4-Schema (PK='key'), schreiben Roh-Zeilen
+    // ohne userId/geaendertAm, und öffnen die DB dann mit dem aktuellen
+    // Schema. Dexie muss v5 und v6 fehlerfrei durchlaufen (vorher:
+    // UpgradeError "Not yet support for changing primary key"), und die
+    // Daten müssen mit korrektem Compound-Key [key+userId=''] lesbar sein.
+    const dbName = `bma-lager-mig-${Math.random().toString(36).slice(2)}`
 
-    // 1:1-Kopie der Logik in src/db/database.ts v5-upgrade
-    function migrate(row: Roh, now: string): Roh {
-      const out: Roh = { ...row }
-      if (out['userId'] === undefined || out['userId'] === null) out['userId'] = ''
-      if (typeof out['geaendertAm'] !== 'string') out['geaendertAm'] = now
-      return out
-    }
+    // Dexie-Schema in v4 (siehe src/db/database.ts v1–v4). Wir
+    // rekonstruieren hier nur die `einstellungen`-Tabelle, weil das den
+    // PK-Wechsel auslöst — die anderen Tabellen sind für diesen Pfad egal.
+    const Dexie = (await import('dexie')).default
+    const v4 = new Dexie(dbName)
+    v4.version(4).stores({
+      einstellungen: 'key',
+    })
+    await v4.table('einstellungen').bulkAdd([
+      { key: 'sprache', value: 'de' }, // kein userId, kein geaendertAm
+      { key: 'standardStandortId', value: 'standort-1' },
+    ])
+    v4.close()
 
-    const now = new Date().toISOString()
-    const migrated = migrate(rohZeile, now)
+    // Jetzt das echte Schema öffnen — Dexie muss v5 + v6 hochrüsten.
+    // v5 lässt `einstellungen` absichtlich weg (Drop), v6 legt sie neu an.
+    const fresh = new Dexie(dbName)
+    fresh
+      .version(5)
+      .stores({
+        einstellungen2: '[key+userId], key, userId',
+      })
+      .upgrade(async (tx) => {
+        const alteZeilen = await tx.table('einstellungen').toArray()
+        const migrierte = alteZeilen.map((row) => {
+          const r = row as Record<string, unknown>
+          return {
+            key: String(r['key'] ?? ''),
+            userId: r['userId'] === undefined || r['userId'] === null ? '' : String(r['userId']),
+            value: typeof r['value'] === 'string' ? r['value'] : '',
+            geaendertAm:
+              typeof r['geaendertAm'] === 'string' && (r['geaendertAm'] as string).length > 0
+                ? (r['geaendertAm'] as string)
+                : new Date().toISOString(),
+          }
+        })
+        if (migrierte.length > 0) {
+          await tx.table('einstellungen2').bulkPut(migrierte)
+        }
+      })
+    fresh
+      .version(6)
+      .stores({
+        einstellungen: '[key+userId], key, userId',
+      })
+      .upgrade(async (tx) => {
+        const alteZeilen = await tx.table('einstellungen2').toArray()
+        if (alteZeilen.length > 0) {
+          await tx.table('einstellungen').bulkPut(alteZeilen)
+          await tx.table('einstellungen2').clear()
+        }
+      })
+    await fresh.open()
 
-    expect(migrated['userId']).toBe('')
-    expect(migrated['geaendertAm']).toBe(now)
-    expect(migrated['key']).toBe('sprache')
-    expect(migrated['value']).toBe('de')
+    // Schema ist final: `einstellungen` existiert mit Compound-PK und ist
+    // die einzige Tabelle mit Daten. `einstellungen2` wurde in v6 aus
+    // dem Schema entfernt; Dexie droppt sie beim Upgrade (gibt's nur
+    // noch im Schema-Tracking, Daten sind weg → count() = 0).
+    expect(fresh.tables.some((t) => t.name === 'einstellungen')).toBe(true)
+    expect(await fresh.table('einstellungen').count()).toBe(2)
+    expect(await fresh.table('einstellungen2').count()).toBe(0)
+
+    // Beide Zeilen sind migriert; userId='' und geaendertAm gesetzt
+    const all = await fresh.table('einstellungen').toArray()
+    expect(all).toHaveLength(2)
+
+    const sprache = await fresh.table('einstellungen').get(['sprache', ''])
+    expect(sprache?.['value']).toBe('de')
+    expect(typeof sprache?.['geaendertAm']).toBe('string')
+    expect((sprache?.['geaendertAm'] ?? '').length).toBeGreaterThan(0)
+
+    const standort = await fresh.table('einstellungen').get(['standardStandortId', ''])
+    expect(standort?.['value']).toBe('standort-1')
+
+    fresh.close()
+    await fresh.delete()
   })
 
   it('sync-Marker (sync.lastPullAt, sync.lastPushAt) liegen unter userId=""', async () => {

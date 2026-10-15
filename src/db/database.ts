@@ -2,10 +2,14 @@
 // Schema-Versionierung explizit: jede Schema-Änderung legt eine neue .version() an.
 // Die Domänen-Schicht liest und schreibt über dieses Singleton.
 //
-// Aktuelles Schema: v5 (Einstellungen Cross-Device-synchronisiert mit
-// userId-Scope). Frühere Versionen (v1–v4) sind nur noch für Migration
-// existierender Browser-DBs. Wenn du eine frische DB anlegst, wird direkt
-// v5 verwendet.
+// Aktuelles Schema: v6 (Einstellungen Cross-Device-synchronisiert mit
+// userId-Scope, Tabellenname final `einstellungen`). Frühere Versionen
+// (v1–v5) sind nur noch für Migration existierender Browser-DBs. Wenn
+// du eine frische DB anlegst, wird direkt v6 verwendet.
+//
+// Hinweis: v5→v6 ist ein PK-Wechsel von `key` auf `[key+userId]` für die
+// `einstellungen`-Tabelle. Dexie kann das nicht in-place; siehe Kommentar
+// an v5 für den Table-Rename-Trick.
 
 import Dexie, { type Table } from 'dexie'
 import type {
@@ -93,9 +97,22 @@ export class BmaLagerDb extends Dexie {
           })
       })
 
-    // v5: Einstellungen werden Cross-Device synchronisiert.
-    //      - Primary Key wird zum Compound [key+userId]
-    //      - userId (null = global) und geaendertAm kommen dazu
+    // v5: Einstellungen werden Cross-Device synchronisiert — PK wird zum
+    //      Compound [key+userId]. Dexie/IndexedDB kann einen PK nicht in-
+    //      place wechseln (`UpgradeError: Not yet support for changing
+    //      primary key`). Deshalb der Table-Rename-Trick:
+    //      - v5 lässt `einstellungen` aus dem .stores()-Schema weg → Dexie
+    //        droppt die Tabelle beim Upgrade selbst. Im .upgrade() lesen
+    //        wir die alten Zeilen, schreiben sie in die temporäre Tabelle
+    //        `einstellungen2` (Compound-PK) und lassen die alte Tabelle
+    //        von Dexie droppen.
+    //      - v6 deklariert `einstellungen` mit Compound-PK neu. Da die
+    //        Tabelle in v5 vollständig verschwunden ist, interpretiert
+    //        Dexie v6 als "create table" — kein PK-Wechsel, sondern ein
+    //        frischer Create. `einstellungen2` verschwindet in v6.
+    //
+    //      Inhalt pro Zeile:
+    //      - userId (null = global) und geaendertAm werden neu gesetzt
     //      - Alte Zeilen (v1–v4) bekommen userId=null und geaendertAm=now
     //      - Hinweis: Dexie erlaubt kein echtes `null` in Primary-Key-
     //        Komponenten. Wir nutzen die Konvention `userId = ''` (leerer
@@ -109,22 +126,65 @@ export class BmaLagerDb extends Dexie {
         buchungen:
           'id, artikelId, standortId, standortZielId, typ, erstelltAm, storno, stornoVon, paarId, serverId',
         projekte: 'id, nummer, archiviert',
+        // alte `einstellungen`-Tabelle fehlt absichtlich → Dexie droppt sie
+        // neue Tabelle mit Compound-PK — temporärer Name, in v6 umbenannt
+        einstellungen2: '[key+userId], key, userId',
+        auditLog: 'id, aktion, entitaet, entitaetId, zeit',
+        outbox: 'id, entity, syncedAt, createdAt',
+      })
+      .upgrade(async (tx) => {
+        // Dexie droppt die alte `einstellungen`-Tabelle NACH diesem
+        // .upgrade()-Callback automatisch. Innerhalb der Transaktion ist
+        // die Tabelle aber noch lesbar — wir retten alle Zeilen.
+        const now = new Date().toISOString()
+        const alteZeilen = await tx.table('einstellungen').toArray()
+        const migrierte: Array<{
+          key: string
+          userId: string
+          value: string
+          geaendertAm: string
+        }> = []
+        for (const row of alteZeilen as Array<Record<string, unknown>>) {
+          const key = typeof row['key'] === 'string' ? row['key'] : null
+          const value = typeof row['value'] === 'string' ? row['value'] : ''
+          const rawUid = row['userId']
+          const userId: string = rawUid === undefined || rawUid === null ? '' : String(rawUid)
+          const rawTs = row['geaendertAm']
+          const geaendertAm: string = typeof rawTs === 'string' && rawTs.length > 0 ? rawTs : now
+          if (!key) continue // kaputte Zeile — überspringen
+          migrierte.push({ key, userId, value, geaendertAm })
+        }
+        if (migrierte.length > 0) {
+          await tx.table('einstellungen2').bulkPut(migrierte)
+        }
+      })
+
+    // v6: Compound-PK-Tabelle zurück unter den finalen Namen `einstellungen`.
+    //     Dexie droppt `einstellungen2` und erstellt `einstellungen` mit
+    //     Compound-PK. Die Daten aus `einstellungen2` werden im Upgrade
+    //     nach `einstellungen` übertragen.
+    this.version(6)
+      .stores({
+        artikel: 'id, sharePointId, typ, status, titel',
+        standorte: 'id, name, typ, archiviert',
+        buchungen:
+          'id, artikelId, standortId, standortZielId, typ, erstelltAm, storno, stornoVon, paarId, serverId',
+        projekte: 'id, nummer, archiviert',
         einstellungen: '[key+userId], key, userId',
         auditLog: 'id, aktion, entitaet, entitaetId, zeit',
         outbox: 'id, entity, syncedAt, createdAt',
       })
       .upgrade(async (tx) => {
-        // Bestehende v4-Zeilen bekommen userId='' (Index-konformer globaler
-        // Marker) und geaendertAm=now. Die TypeScript-Domain behandelt ''
-        // wie null.
-        const now = new Date().toISOString()
-        await tx
-          .table('einstellungen')
-          .toCollection()
-          .modify((row: Record<string, unknown>) => {
-            if (row['userId'] === undefined || row['userId'] === null) row['userId'] = ''
-            if (typeof row['geaendertAm'] !== 'string') row['geaendertAm'] = now
-          })
+        // `einstellungen2` ist im v6-Schema verschwunden — Dexie droppt
+        // sie nach diesem Upgrade. Innerhalb der Transaktion lesen wir
+        // die Zeilen, schreiben sie in die frisch angelegte
+        // `einstellungen`-Tabelle und löschen die Quelle, damit keine
+        // Geister-Zeilen zurückbleiben.
+        const alteZeilen = await tx.table('einstellungen2').toArray()
+        if (alteZeilen.length > 0) {
+          await tx.table('einstellungen').bulkPut(alteZeilen)
+          await tx.table('einstellungen2').clear()
+        }
       })
   }
 }
