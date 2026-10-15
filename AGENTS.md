@@ -48,19 +48,21 @@ der ENV und nutzt sie mit Fallback auf `git rev-parse` (lokal).
 - **Erlaubte Typen**: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`,
   `test`, `build`, `ci`, `chore`, `revert`. `feat!`/`BREAKING CHANGE:` für
   Major-Bumps.
-- **release-please** (`.github/workflows/release-please.yml`) öffnet bei
-  jedem Push auf `main` einen Release-PR, der `package.json` + `CHANGELOG.md`
-  bumpt und das passende `vX.Y.Z`-Tag erzeugt. Konfig in
-  `.release-please-config.json` (Single-Package-Repo). Manifest-Datei
-  `.release-please-manifest.json` führt die aktuelle Version (`".": "x.y.z"`).
-  - Seit release-please v17 ist Manifest-Mode der Default, sobald die Config
-    `packages` enthält — die Datei muss im Repo liegen, sonst Crash mit
-    `Missing required manifest versions`.
-  - Vor `1.0.0`: `feat` → minor, `fix` → patch (`bump-minor-pre-major`).
-  - Ab `1.0.0`: Semver strikt (`feat` → minor, `fix` → patch, Breaking → major).
+- **Version läuft mit jedem Commit hoch.** Ein Husky-`pre-commit`-Hook ruft
+  `scripts/bump-version.mjs` auf, das die Patch-Nummer (semver `MAJOR.MINOR.PATCH`)
+  in `package.json` (Root) und `server/package.json` um 1 erhöht und beide
+  Dateien mit `git add` zum laufenden Commit staget. Pre-Release-Tags
+  (z. B. `0.2.0-beta.1`) bleiben erhalten, Build-Metadaten werden verworfen.
+  Manuelle Minor-/Major-Bumps: einfach den gewünschten Wert in beide
+  `package.json` schreiben — der nächste Commit landet auf `<neu>.+1`.
+  - `npm run version:bump` macht dasselbe ohne Hook (z. B. für CI-Tricks).
+  - Im Repo liegt **kein** `CHANGELOG.md` und **kein** `v*` Tagging. Wer
+    release-notes braucht, schaut in `git log` (Conventional Commits
+    reichen für die Gruppierung).
 - **`build-and-push.yml`** baut das PWA- und API-Image bei Push auf `main`
-  **und** bei Tag `v*` — der `v*`-Trigger sorgt dafür, dass auch nach
-  Release-PRs ein frisches Image mit der neuen Version gepusht wird.
+  und pusht sie mit Tag `:latest` **und** mit dem SHA-Tag. Frische Images
+  kommen also mit jedem Merge auf `main` — kein zusätzlicher Tag-Trigger
+  mehr nötig.
 
 ## Sicherheit
 
@@ -71,7 +73,7 @@ der ENV und nutzt sie mit Fallback auf `git rev-parse` (lokal).
 
 - **Images kommen aus GHCR.** `docker-compose.yml` referenziert `api`, `pwa` und `migrate` hartkodiert als `ghcr.io/icem0/bma-lager-{api,pwa}:latest`. **Kein** `build:`-Block, **kein** Variablen-Override. Deployer ziehen die Images — fertig.
 - **`migrate`** ist ein Entry-Point des API-Images (`node dist/db/migrate.js`). Es wird also nicht für jeden Job ein eigenes Image gebaut. Die `api`-Service-Definition startet vor jedem Server-Start automatisch `node dist/db/migrate.js` (idempotent — bereits angewendete Migrationen werden uebersprungen). Den allerersten Admin legt die PWA selbst an, sobald `/api/auth/setup-status` meldet, dass die `users`-Tabelle leer ist. Der `migrate`-Profil-Service bleibt fuer manuelle Aufrufe erhalten (`docker compose --profile migrate run --rm migrate`).
-- **CI-Workflow** `.github/workflows/build-and-push.yml` baut bei Push auf `main` (oder Tag `v*`) die Images und pusht sie mit Tag `:latest` **und** mit dem SHA-Tag. Bei Pull-Requests wird **nur** gebaut, nicht gepusht (Gate `if: github.event_name != 'pull_request'`). Sichtbarkeit wird per `PATCH /user/packages/container/{pkg}` auf `public` gesetzt.
+- **CI-Workflow** `.github/workflows/build-and-push.yml` baut bei Push auf `main` die Images und pusht sie mit Tag `:latest` **und** mit dem SHA-Tag. Bei Pull-Requests wird **nur** gebaut, nicht gepusht (Gate `if: github.event_name != 'pull_request'`). Sichtbarkeit wird per `PATCH /user/packages/container/{pkg}` auf `public` gesetzt.
 - **GHCR-Token**: Für private Pakete braucht der Deployer einen GitHub-PAT mit Scope `read:packages`. Bare Docker / Coolify: `docker login ghcr.io`. Arcane: einmalig `POST /container-registries` mit dem PAT. Für öffentliche Pakete reicht kein Token.
 - **GHCR-Visibility-Automation**: `build-and-push.yml` ruft am Ende jedes Jobs `PATCH /user/packages/container/{pkg}` mit `{"visibility":"public"}`. Der automatische `GITHUB_TOKEN` darf das für User-Repos **nicht** (gibt 404). Lösung: klassischen PAT mit Scopes `repo` + `write:packages` unter dem Secret-Namen **`GHCR_ADMIN_TOKEN`** im Repo hinterlegen (`Settings → Secrets and variables → Actions`). Ohne Secret wird der Flip mit `::warning::` übersprungen — das Image wird trotzdem gepusht, das Paket bleibt aber `private`. Für server-seitige Pulls reicht das (Auth gegen `ghcr.io` via `docker login` bzw. Coolify-/Arcane-Registry-Config). Wer das Paket wirklich öffentlich haben will, legt den Secret an, der Flip läuft dann automatisch.
 - **Arcane / Coolify / bare Docker** funktionieren ohne Anpassung — sie alle ziehen `image:`-Referenzen transparent. Der frühere `build:`-Pfad ist absichtlich entfernt.
@@ -83,8 +85,12 @@ der ENV und nutzt sie mit Fallback auf `git rev-parse` (lokal).
 Wer nicht auf dem Live-Server testen will, kann denselben Stack lokal unter
 `http://localhost:4280` (PWA) bzw. `http://localhost:4242` (API) fahren.
 Stack-Konfiguration steht in `docker-compose.yml` + `docker-compose.override.yml`
-(letztere ersetzt die named Volumes durch Bind-Mounts nach `./.data/` und
-exposed den API-Port direkt am Host).
+(letztere ist in `.gitignore` — lokal, nicht einchecken). Override-Aufgaben:
+entfernt das `pgdata`-Volume am `db`-Service per `volumes: !reset` (jeder
+`docker compose up` startet mit leerem Postgres-Cluster), bind-mountet das
+Foto-Verzeichnis der API nach `./.data/fotos/`, exponiert den API-Port
+`4242` direkt am Host. Die Produktion bleibt unberuehrt und verwendet
+`pgdata` weiterhin als named volume.
 
 **Frischer Test pro Lauf** (kein DB-State zwischen Runs):
 
