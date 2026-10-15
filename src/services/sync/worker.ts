@@ -53,6 +53,23 @@ export function computeBackoffMs(attempts: number, capMs: number = BACKOFF_CAP_M
 }
 
 /**
+ * Zählt, in wie vielen Tabellen `lokal` von `server` abweicht. Wird vom
+ * Self-Healing-Pfad in `runSync` benutzt, um zu entscheiden, ob der
+ * `lastPullAt`-Marker ungültig ist und ein voller Re-Pull nötig ist.
+ * Spiegel der Logik in src/App.vue (UI-Anzeige); hier dupliziert, damit
+ * der Worker ohne Vue-Imports testbar bleibt.
+ */
+export function zaehleAbweichungen(l: TableCounts | null, s: TableCounts | null): number {
+  if (!l || !s) return 0
+  let n = 0
+  if (l.artikel !== s.artikel) n++
+  if (l.standorte !== s.standorte) n++
+  if (l.projekte !== s.projekte) n++
+  if (l.buchungen !== s.buchungen) n++
+  return n
+}
+
+/**
  * Bestimmt die Identität eines Outbox-Items innerhalb eines Push-Batches.
  * Der Server referenziert jedes Item in `result.accepted` / `result.errors`
  * / `result.conflicts` unter dieser ID, damit der Client das passende
@@ -795,7 +812,63 @@ export async function runSync(opts: { token: string | null; apiBase: string }): 
       // Counts sind nur Anzeige – Fehler hier sind nicht kritisch.
     }
 
-    const localCounts = await getLocalCounts()
+    let localCounts: TableCounts = await getLocalCounts()
+
+    // 4) Self-Healing: Wenn der inkrementelle Pull nichts brachte, aber
+    //    der Server in mindestens einer Tabelle mehr Zeilen hat als
+    //    lokal, ist der `lastPullAt`-Marker falsch (z. B. Client/Server-
+    //    Clock-Drift, Artikel mit `geaendertAm` vor dem ersten Pull,
+    //    oder eine Race-Condition zwischen Push und Pull). Wir löschen
+    //    den Marker und holen den vollen Snapshot. Einmaliger Vorgang pro
+    //    Sync-Lauf, damit wir nicht in einer Endlosschleife landen, falls
+    //    der Server tatsächlich konsistent leer ist (lokal=server=0).
+    if (
+      lastPull !== null &&
+      serverCounts !== null &&
+      zaehleAbweichungen(localCounts, serverCounts) > 0 &&
+      // Nur heilen, wenn der gerade ausgeführte Pull nichts geliefert
+      // hat. Wenn der Pull Daten brachte und es trotzdem noch Lücken
+      // gibt, ist das ein echter Konflikt (LWW) — kein Marker-Problem.
+      snap.artikel.length === 0 &&
+      snap.standorte.length === 0 &&
+      snap.projekte.length === 0 &&
+      snap.buchungen.length === 0 &&
+      snap.einstellungen.length === 0
+    ) {
+      console.warn(
+        '[sync] self-healing: lastPullAt ungültig — Server hat mehr Zeilen als lokal, ' +
+          'Pull lieferte nichts. Setze Marker zurück und hole vollen Snapshot.',
+        { lastPull, localCounts, serverCounts },
+      )
+      // Marker zurücksetzen: `value = ''` lässt runSync beim nächsten Lauf
+      // `lastPull` als `null` lesen (siehe `?? null` weiter oben) und damit
+      // den vollen Snapshot ziehen. Wir löschen NICHT die Zeile, weil
+      // applySnapshot die Zeile sowieso neu schreibt — und `put` mit
+      // leerem value ist robuster als `delete` (kein 404, kein Schema-Drift).
+      await getDb().einstellungen.put({
+        key: 'sync.lastPullAt',
+        userId: '',
+        value: '',
+        geaendertAm: jetztIso(),
+      })
+      const fullSnap = await fetchSnapshot(apiBase, token, '')
+      await applySnapshot(fullSnap)
+      // Counts nach Heilung neu holen.
+      try {
+        const st = await fetchServerStatus(apiBase, token)
+        serverCounts = st.counts
+        serverTime = st.serverTime
+      } catch {
+        // Counts sind nur Anzeige.
+      }
+      // localCounts neu holen, sonst zeigt das Sync-Panel weiter die
+      // alten (zu niedrigen) Werte, bis der nächste Tick läuft.
+      try {
+        localCounts = await getLocalCounts()
+      } catch {
+        // Counts sind nur Anzeige.
+      }
+    }
 
     updateStatus({
       status: 'idle',

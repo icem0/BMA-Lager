@@ -13,6 +13,7 @@ import { useSyncStore } from './stores/sync'
 import { getApiBaseUrl } from './auth/api'
 import { clearAppCacheAndReload } from './services/sync/clear-cache'
 import { resetLocalDbAndPull } from './services/sync/reset-local-db'
+import { zaehleAbweichungen } from './services/sync/worker'
 import { version, commit, branch, buildDate } from './version'
 import { useDevMode } from './composables/useDevMode'
 
@@ -286,19 +287,6 @@ async function dbResetBestaetigen(): Promise<void> {
     dbResetFehler.value = e instanceof Error ? e.message : String(e)
     dbResetPhase.value = 'fehler'
   }
-}
-
-function zaehleAbweichungen(
-  l: { artikel: number; standorte: number; projekte: number; buchungen: number } | null,
-  s: { artikel: number; standorte: number; projekte: number; buchungen: number } | null,
-): number {
-  if (!l || !s) return 0
-  let n = 0
-  if (l.artikel !== s.artikel) n++
-  if (l.standorte !== s.standorte) n++
-  if (l.projekte !== s.projekte) n++
-  if (l.buchungen !== s.buchungen) n++
-  return n
 }
 
 const syncZustand = computed<

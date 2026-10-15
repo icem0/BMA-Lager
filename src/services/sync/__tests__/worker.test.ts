@@ -1142,3 +1142,228 @@ describe('Sync — einstellung/upsert End-to-End', () => {
     expect(stuckEinstellung?.payloadId).toBe('sprache#u1')
   })
 })
+
+describe('Sync — Self-Healing: lastPullAt ungültig → voller Re-Pull', () => {
+  it('Wenn inkrementeller Pull nichts liefert, aber serverCounts > localCounts, wird der Marker zurückgesetzt und ein voller Pull gemacht', async () => {
+    // Setup: lastPullAt existiert bereits (also nicht der allererste Sync),
+    // und der Client hat 1 Artikel lokal.
+    const a1 = artikelAnlage(neueUuid(), 'Lokal A1')
+    await getDb().artikel.add(a1)
+    await getDb().einstellungen.put({
+      key: 'sync.lastPullAt',
+      userId: '',
+      value: '2026-10-15T15:00:00.000Z',
+      geaendertAm: jetztIso(),
+    })
+
+    // Server hat 2 Artikel (einer mehr als lokal), der inkrementelle
+    // Pull mit `since=lastPullAt` liefert aber NICHTS (simuliert einen
+    // kaputten Marker / Clock-Drift). Der Self-Healing-Pfad muss dann
+    // den Marker zurücksetzen und einen vollen Pull machen.
+    const a1Server = { ...artikelAnlage(a1.id, 'Lokal A1') }
+    const a2Server = artikelAnlage(neueUuid(), 'Server-only A2')
+
+    let snapshotCalls = 0
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url.includes('/api/sync/snapshot')) {
+        snapshotCalls++
+        if (snapshotCalls === 1) {
+          // Erster Pull: inkrementell, liefert nichts (Marker falsch).
+          return new Response(
+            JSON.stringify({
+              serverTime: '2026-10-15T15:01:00.000Z',
+              since: '2026-10-15T15:00:00.000Z',
+              artikel: [],
+              standorte: [],
+              projekte: [],
+              buchungen: [],
+              einstellungen: [],
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          )
+        }
+        // Zweiter Pull: ohne `since`, liefert alles.
+        return new Response(
+          JSON.stringify({
+            serverTime: '2026-10-15T15:01:01.000Z',
+            since: '1970-01-01T00:00:00.000Z',
+            artikel: [a1Server, a2Server],
+            standorte: [],
+            projekte: [],
+            buchungen: [],
+            einstellungen: [],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      if (url.endsWith('/api/sync/status')) {
+        return new Response(
+          JSON.stringify({
+            serverTime: new Date().toISOString(),
+            counts: { artikel: 2, standorte: 0, projekte: 0, buchungen: 0 },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      return new Response('not found', { status: 404 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { runSync, getSyncStatus } = await import('../worker')
+    await runSync({ token: null, apiBase: 'http://test.local' })
+
+    // Assert: zwei Snapshot-Calls (initial inkrementell + Self-Healing voll).
+    expect(snapshotCalls).toBe(2)
+
+    // Zweiter Aufruf ging OHNE `since` raus.
+    const lastCall = fetchMock.mock.calls[fetchMock.mock.calls.length - 1] as [string] | [URL]
+    const lastUrl = typeof lastCall[0] === 'string' ? lastCall[0] : lastCall[0].toString()
+    expect(lastUrl).not.toContain('since=')
+
+    // Lokal sind jetzt 2 Artikel (Heilung hat a2 nachgezogen).
+    const artikel = await getDb().artikel.toArray()
+    expect(artikel.length).toBe(2)
+    expect(artikel.map((a) => a.id).sort()).toEqual([a1.id, a2Server.id].sort())
+
+    // Status zeigt konsistente Counts.
+    const st = getSyncStatus()
+    expect(st.localCounts?.artikel).toBe(2)
+    expect(st.serverCounts?.artikel).toBe(2)
+  })
+
+  it('Ohne Divergenz wird kein Self-Healing getriggert (kein zweiter Pull)', async () => {
+    // lastPullAt ist gesetzt, lokal=server=0 → keine Heilung nötig.
+    await getDb().einstellungen.put({
+      key: 'sync.lastPullAt',
+      userId: '',
+      value: '2026-10-15T15:00:00.000Z',
+      geaendertAm: jetztIso(),
+    })
+
+    let snapshotCalls = 0
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url.includes('/api/sync/snapshot')) {
+        snapshotCalls++
+        return new Response(
+          JSON.stringify({
+            serverTime: '2026-10-15T15:01:00.000Z',
+            since: '2026-10-15T15:00:00.000Z',
+            artikel: [],
+            standorte: [],
+            projekte: [],
+            buchungen: [],
+            einstellungen: [],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      if (url.endsWith('/api/sync/status')) {
+        return new Response(
+          JSON.stringify({
+            serverTime: new Date().toISOString(),
+            counts: { artikel: 0, standorte: 0, projekte: 0, buchungen: 0 },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      return new Response('not found', { status: 404 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { runSync } = await import('../worker')
+    await runSync({ token: null, apiBase: 'http://test.local' })
+
+    // Genau ein Snapshot-Call (kein Self-Healing).
+    expect(snapshotCalls).toBe(1)
+  })
+
+  it('Self-Healing feuert NICHT, wenn der Pull bereits Daten liefert (LWW-Konflikt, kein Marker-Problem)', async () => {
+    // Server liefert einen Artikel, der lokal schon existiert mit
+    // neuerem geaendertAm → wird nicht überschrieben. Counts bleiben
+    // divergent. Aber: der Pull hat Daten geliefert → KEIN Self-Healing.
+    const id = neueUuid()
+    const lokal = artikelAnlage(id, 'Lokal (neuer)')
+    lokal.geaendertAm = '2026-10-15T15:00:01.000Z'
+    await getDb().artikel.add(lokal)
+    await getDb().einstellungen.put({
+      key: 'sync.lastPullAt',
+      userId: '',
+      value: '2026-10-15T15:00:00.000Z',
+      geaendertAm: jetztIso(),
+    })
+
+    const server = artikelAnlage(id, 'Server (älter)')
+    server.geaendertAm = '2026-10-15T15:00:00.500Z'
+
+    let snapshotCalls = 0
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url.includes('/api/sync/snapshot')) {
+        snapshotCalls++
+        return new Response(
+          JSON.stringify({
+            serverTime: '2026-10-15T15:01:00.000Z',
+            since: '2026-10-15T15:00:00.000Z',
+            artikel: [server],
+            standorte: [],
+            projekte: [],
+            buchungen: [],
+            einstellungen: [],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      if (url.endsWith('/api/sync/status')) {
+        return new Response(
+          JSON.stringify({
+            serverTime: new Date().toISOString(),
+            counts: { artikel: 1, standorte: 0, projekte: 0, buchungen: 0 },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      return new Response('not found', { status: 404 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { runSync } = await import('../worker')
+    await runSync({ token: null, apiBase: 'http://test.local' })
+
+    // Nur EIN Pull — der Pull hat geliefert, also kein Self-Healing.
+    expect(snapshotCalls).toBe(1)
+
+    // Lokal behält seine neuere Version (LWW).
+    const a = await getDb().artikel.get(id)
+    expect(a?.titel).toBe('Lokal (neuer)')
+  })
+
+  it('zaehleAbweichungen: reine Helper-Funktion', async () => {
+    const { zaehleAbweichungen } = await import('../worker')
+    expect(
+      zaehleAbweichungen(
+        { artikel: 1, standorte: 2, projekte: 3, buchungen: 4 },
+        { artikel: 1, standorte: 2, projekte: 3, buchungen: 4 },
+      ),
+    ).toBe(0)
+    expect(
+      zaehleAbweichungen(
+        { artikel: 1, standorte: 2, projekte: 3, buchungen: 4 },
+        { artikel: 0, standorte: 2, projekte: 3, buchungen: 4 },
+      ),
+    ).toBe(1)
+    expect(
+      zaehleAbweichungen(
+        { artikel: 1, standorte: 2, projekte: 3, buchungen: 4 },
+        { artikel: 0, standorte: 0, projekte: 0, buchungen: 0 },
+      ),
+    ).toBe(4)
+    expect(zaehleAbweichungen(null, { artikel: 0, standorte: 0, projekte: 0, buchungen: 0 })).toBe(
+      0,
+    )
+    expect(zaehleAbweichungen({ artikel: 1, standorte: 2, projekte: 3, buchungen: 4 }, null)).toBe(
+      0,
+    )
+  })
+})
