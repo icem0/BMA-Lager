@@ -53,7 +53,8 @@ export interface WarenImportEingabe {
  */
 async function stelleHauptLagerSicher(name: string): Promise<string> {
   const db = getDb()
-  const vorhanden = (await db.standorte.filter((s) => s.name === name).toArray())[0]
+  // Indexierter Zugriff auf `name` (Dexie v1+).
+  const vorhanden = await db.standorte.where('name').equals(name).first()
   if (vorhanden) {
     if (!vorhanden.standard) {
       await db.standorte.update(vorhanden.id, { standard: true })

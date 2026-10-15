@@ -298,6 +298,7 @@ describe('Sync — Push-Markierung (Outbox- vs. Payload-IDs)', () => {
             standorte: [],
             projekte: [],
             buchungen: [],
+            einstellungen: [],
           }),
           { status: 200, headers: { 'Content-Type': 'application/json' } },
         )
@@ -516,6 +517,7 @@ describe('Sync — Diagnose (lastFailure)', () => {
             standorte: [],
             projekte: [],
             buchungen: [],
+            einstellungen: [],
           }),
           { status: 200, headers: { 'Content-Type': 'application/json' } },
         )
@@ -560,6 +562,7 @@ describe('Sync — Diagnose (lastFailure)', () => {
             standorte: [],
             projekte: [],
             buchungen: [],
+            einstellungen: [],
           }),
           { status: 200, headers: { 'Content-Type': 'application/json' } },
         )
@@ -678,6 +681,7 @@ describe('Sync — 401 / Auth-Reset', () => {
             standorte: [],
             projekte: [],
             buchungen: [],
+            einstellungen: [],
           }),
           { status: 200, headers: { 'Content-Type': 'application/json' } },
         )

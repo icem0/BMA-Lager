@@ -15,7 +15,15 @@
 // Wir laufen in einem setInterval + bei `online`-Event + bei `visibilitychange`.
 
 import { getDb } from '../../db/database'
-import type { Artikel, Buchung, OutboxEintrag, OutboxOp, Projekt, Standort } from '../../db/types'
+import type {
+  Artikel,
+  Buchung,
+  Einstellung,
+  OutboxEintrag,
+  OutboxOp,
+  Projekt,
+  Standort,
+} from '../../db/types'
 import { jetztIso, neueUuid } from '../../domain/ids'
 import { setApiBaseUrl } from '../../auth/api'
 
@@ -115,6 +123,8 @@ export interface SyncSnapshot {
   standorte: Standort[]
   projekte: Projekt[]
   buchungen: Buchung[]
+  /** Cross-Device-synchronisierte Einstellungen. Pro User gefiltert. */
+  einstellungen: Einstellung[]
 }
 
 export interface PushResult {
@@ -307,6 +317,10 @@ async function getLocalCounts(): Promise<TableCounts> {
 // ---------- Outbox-Helfer ----------
 
 async function pendingCount(): Promise<number> {
+  // Dexie/IndexedDB unterstützt kein `where('syncedAt').equals(null)` —
+  // daher der Full-Scan. Outbox-Größe bleibt im Lager-Use-Case klein
+  // (≪ 1k Einträge zwischen Sync-Ticks), ein Index hier wäre teurer
+  // als der Scan. Bewusst beibehalten.
   const all = await getDb().outbox.toArray()
   return all.filter((o) => o.syncedAt === null).length
 }
@@ -336,6 +350,10 @@ async function markFailed(id: string, error: string): Promise<void> {
  * eines abgelaufenen Tokens als failed markiert wurden. syncedAt bleibt
  * unangetastet (sind eh noch nicht gepusht). Nach erfolgreichem Re-Login
  * werden sie beim nächsten Sync-Lauf wieder gepusht.
+ *
+ * Hinweis: läuft nur nach Logout/Re-Login (selten). Ein Full-Scan ist
+ * hier akzeptabel, weil `attempts`/`lastError` bewusst nicht indiziert
+ * sind — die Felder sind nur im Fehlerpfad relevant.
  */
 async function resetOutboxAfterAuthRevoked(): Promise<void> {
   const all = await getDb().outbox.toArray()
@@ -379,44 +397,70 @@ async function collectStuckItems(limit = 5): Promise<SyncLastFailure['stuckItems
 
 async function applySnapshot(snap: SyncSnapshot): Promise<void> {
   const db = getDb()
-  await db.transaction('rw', [db.artikel, db.standorte, db.projekte, db.buchungen], async () => {
-    // Artikel
-    for (const a of snap.artikel) {
-      const existing = await db.artikel.get(a.id)
-      if (!existing) {
-        await db.artikel.add(a)
-      } else if ((a.geaendertAm ?? '') > (existing.geaendertAm ?? '')) {
-        await db.artikel.put(a)
+  await db.transaction(
+    'rw',
+    [db.artikel, db.standorte, db.projekte, db.buchungen, db.einstellungen],
+    async () => {
+      // Artikel
+      for (const a of snap.artikel) {
+        const existing = await db.artikel.get(a.id)
+        if (!existing) {
+          await db.artikel.add(a)
+        } else if ((a.geaendertAm ?? '') > (existing.geaendertAm ?? '')) {
+          await db.artikel.put(a)
+        }
       }
-    }
-    // Standorte
-    for (const s of snap.standorte) {
-      const existing = await db.standorte.get(s.id)
-      if (!existing) {
-        await db.standorte.add(s)
-      } else if ((s.geaendertAm ?? '') > (existing.geaendertAm ?? '')) {
-        await db.standorte.put(s)
+      // Standorte
+      for (const s of snap.standorte) {
+        const existing = await db.standorte.get(s.id)
+        if (!existing) {
+          await db.standorte.add(s)
+        } else if ((s.geaendertAm ?? '') > (existing.geaendertAm ?? '')) {
+          await db.standorte.put(s)
+        }
       }
-    }
-    // Projekte
-    for (const p of snap.projekte) {
-      const existing = await db.projekte.get(p.id)
-      if (!existing) {
-        await db.projekte.add(p)
-      } else if ((p.geaendertAm ?? '') > (existing.geaendertAm ?? '')) {
-        await db.projekte.put(p)
+      // Projekte
+      for (const p of snap.projekte) {
+        const existing = await db.projekte.get(p.id)
+        if (!existing) {
+          await db.projekte.add(p)
+        } else if ((p.geaendertAm ?? '') > (existing.geaendertAm ?? '')) {
+          await db.projekte.put(p)
+        }
       }
-    }
-    // Buchungen — append-only, nur insert wenn unbekannt
-    for (const b of snap.buchungen) {
-      const existing = await db.buchungen.get(b.id)
-      if (!existing) await db.buchungen.add(b)
-    }
-  })
+      // Buchungen — append-only, nur insert wenn unbekannt
+      for (const b of snap.buchungen) {
+        const existing = await db.buchungen.get(b.id)
+        if (!existing) await db.buchungen.add(b)
+      }
+      // Einstellungen — LWW auf geaendertAm, Identität = (key, userId)
+      for (const e of snap.einstellungen) {
+        const existing = await db.einstellungen.get([e.key, e.userId])
+        if (!existing) {
+          await db.einstellungen.add(e)
+        } else if (e.geaendertAm > existing.geaendertAm) {
+          await db.einstellungen.put(e)
+        }
+      }
+    },
+  )
 
-  // serverTime als lastPull speichern (für nächste Inkremental-Sync)
-  await getDb().einstellungen.put({ key: 'sync.lastPullAt', value: snap.serverTime })
-  await getDb().einstellungen.put({ key: 'sync.lastPushAt', value: snap.serverTime })
+  // serverTime als lastPull speichern (für nächste Inkremental-Sync).
+  // Diese beiden Marker sind global (userId=null) und nur Client-lokal —
+  // sie werden NICHT zum Server gepusht.
+  const now = jetztIso()
+  await getDb().einstellungen.put({
+    key: 'sync.lastPullAt',
+    userId: null,
+    value: snap.serverTime,
+    geaendertAm: now,
+  })
+  await getDb().einstellungen.put({
+    key: 'sync.lastPushAt',
+    userId: null,
+    value: snap.serverTime,
+    geaendertAm: now,
+  })
 }
 
 // ---------- Sync-Hauptaufruf ----------
@@ -426,7 +470,8 @@ export async function runSync(opts: { token: string | null; apiBase: string }): 
   _running = true
 
   const { token, apiBase } = opts
-  const lastPull = (await getDb().einstellungen.get('sync.lastPullAt'))?.value ?? null
+  const lastPull =
+    (await getDb().einstellungen.get(['sync.lastPullAt', null]))?.value ?? null
 
   try {
     updateStatus({ status: 'syncing' })

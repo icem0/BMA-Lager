@@ -2,12 +2,10 @@
 // Schema-Versionierung explizit: jede Schema-Änderung legt eine neue .version() an.
 // Die Domänen-Schicht liest und schreibt über dieses Singleton.
 //
-// Aktuelles Schema: v4 (Artikel-Status enthält 'archiviert', archiviert-Flag entfernt).
-// Frühere Versionen (v1–v3) sind nur noch für Migration existierender
-// Browser-DBs. Wenn du eine frische DB anlegst, wird direkt v4 verwendet.
-// Schema-Versionen 1–3 behalten weiterhin das `archiviert`-Feld auf `artikel`,
-// weil sie die jeweilige Migrations-Historie abbilden. Sie werden nie erneut
-// "aktiviert" — Dexie springt beim Upgrade direkt zur höchsten Version.
+// Aktuelles Schema: v5 (Einstellungen Cross-Device-synchronisiert mit
+// userId-Scope). Frühere Versionen (v1–v4) sind nur noch für Migration
+// existierender Browser-DBs. Wenn du eine frische DB anlegst, wird direkt
+// v5 verwendet.
 
 import Dexie, { type Table } from 'dexie'
 import type {
@@ -25,7 +23,7 @@ export class BmaLagerDb extends Dexie {
   standorte!: Table<Standort, string>
   buchungen!: Table<Buchung, string>
   projekte!: Table<Projekt, string>
-  einstellungen!: Table<Einstellung, string>
+  einstellungen!: Table<Einstellung, [string, string | null]>
   auditLog!: Table<AuditLogEintrag, string>
   /** Sync-Que: jede Schreiboperation landet hier, bis sie zum Server gepusht ist. */
   outbox!: Table<OutboxEintrag, string>
@@ -92,6 +90,34 @@ export class BmaLagerDb extends Dexie {
               row['status'] = 'archiviert'
             }
             delete row['archiviert']
+          })
+      })
+
+    // v5: Einstellungen werden Cross-Device synchronisiert.
+    //      - Primary Key wird zum Compound [key+userId]
+    //      - userId (null = global) und geaendertAm kommen dazu
+    //      - Alte Zeilen (v1–v4) bekommen userId=null und geaendertAm=now
+    this.version(5)
+      .stores({
+        artikel: 'id, sharePointId, typ, status, titel',
+        standorte: 'id, name, typ, archiviert',
+        buchungen:
+          'id, artikelId, standortId, standortZielId, typ, erstelltAm, storno, stornoVon, paarId, serverId',
+        projekte: 'id, nummer, archiviert',
+        einstellungen: '[key+userId], key, userId',
+        auditLog: 'id, aktion, entitaet, entitaetId, zeit',
+        outbox: 'id, entity, syncedAt, createdAt',
+      })
+      .upgrade(async (tx) => {
+        // sync.lastPullAt/sync.lastPushAt bleiben in v5 unter userId=null
+        // (sie sind globale Sync-Marker, nicht pro User).
+        const now = new Date().toISOString()
+        await tx
+          .table('einstellungen')
+          .toCollection()
+          .modify((row: Record<string, unknown>) => {
+            if (row['userId'] === undefined) row['userId'] = null
+            if (typeof row['geaendertAm'] !== 'string') row['geaendertAm'] = now
           })
       })
   }

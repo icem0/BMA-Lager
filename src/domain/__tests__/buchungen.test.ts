@@ -18,7 +18,9 @@ import {
   GleicherStandortError,
   NegativerBestandWarnung,
   PflichtfeldFehltError,
+  UnbekannteReferenzError,
   UngueltigeMengeError,
+  ZukunftsDatumError,
 } from '../errors'
 
 // Test-IDs sind absichtlich deterministisch lesbar, nicht zufällig.
@@ -26,7 +28,11 @@ let testDb: BmaLagerDb
 const A = (n: number) => `art-${n}`
 const S = (n: number) => `std-${n}`
 
-async function seedArtikel(id: string, name: string): Promise<void> {
+async function seedArtikel(
+  id: string,
+  name: string,
+  mindestbestand: number | null = null,
+): Promise<void> {
   const artikel: Artikel = {
     id,
     sharePointId: null,
@@ -37,7 +43,7 @@ async function seedArtikel(id: string, name: string): Promise<void> {
     typ: 'Test',
     lieferant: null,
     verpackungseinheit: 1,
-    mindestbestand: null,
+    mindestbestand,
     nachbestellHinweis: null,
     bestellnummer: null,
     listenpreis: null,
@@ -73,6 +79,7 @@ beforeEach(async () => {
   await seedStandort(S(2), 'Auto-1')
   await seedArtikel(A(1), 'MS 400')
   await seedArtikel(A(2), 'BX-SOL-CT-W')
+  await seedArtikel(A(3), 'MS 300 mit Mindestbestand', 5)
 })
 
 describe('createEinlagerung', () => {
@@ -115,6 +122,7 @@ describe('createEntnahme + Bestand', () => {
     })
     expect(ergebnis.buchung.menge).toBe(-20)
     expect(ergebnis.warnung).toBeNull()
+    expect(ergebnis.mindestbestandWarnung).toBeNull() // A(1) hat keinen Mindestbestand
     const buchungen = await testDb.buchungen.toArray()
     const bestand = berechneBestand(buchungen, S(1))
     expect(bestand).toBe(30) // 50 - 20
@@ -285,5 +293,106 @@ describe('berechneBestandProStandort', () => {
     const map = berechneBestandProStandort(await testDb.buchungen.toArray())
     expect(map.get(S(1))).toBe(6)
     expect(map.get(S(2))).toBe(4)
+  })
+})
+
+describe('Validierung: Referenzen, Zeit, Mindestbestand', () => {
+  it('createEinlagerung lehnt unbekannten Artikel ab', async () => {
+    await expect(
+      createEinlagerung({
+        artikelId: 'gibt-es-nicht',
+        standortId: S(1),
+        menge: 5,
+        erstelltVon: 't',
+      }),
+    ).rejects.toBeInstanceOf(UnbekannteReferenzError)
+  })
+
+  it('createEinlagerung lehnt unbekannten Standort ab', async () => {
+    await expect(
+      createEinlagerung({
+        artikelId: A(1),
+        standortId: 'gibt-es-nicht',
+        menge: 5,
+        erstelltVon: 't',
+      }),
+    ).rejects.toBeInstanceOf(UnbekannteReferenzError)
+  })
+
+  it('createUmlagerung lehnt unbekannten Ziel-Standort ab', async () => {
+    await expect(
+      createUmlagerung({
+        artikelId: A(1),
+        vonId: S(1),
+        nachId: 'gibt-es-nicht',
+        menge: 1,
+        erstelltVon: 't',
+      }),
+    ).rejects.toBeInstanceOf(UnbekannteReferenzError)
+  })
+
+  it('createEinlagerung lehnt Zukunfts-Datum ab', async () => {
+    const future = new Date(Date.now() + 10 * 60_000).toISOString()
+    await expect(
+      createEinlagerung({
+        artikelId: A(1),
+        standortId: S(1),
+        menge: 5,
+        erstelltAm: future,
+        erstelltVon: 't',
+      }),
+    ).rejects.toBeInstanceOf(ZukunftsDatumError)
+  })
+
+  it('createEntnahme lehnt Zukunfts-Datum ab', async () => {
+    const future = new Date(Date.now() + 10 * 60_000).toISOString()
+    await expect(
+      createEntnahme({
+        artikelId: A(1),
+        standortId: S(1),
+        menge: 5,
+        erstelltAm: future,
+        erstelltVon: 't',
+      }),
+    ).rejects.toBeInstanceOf(ZukunftsDatumError)
+  })
+
+  it('createEntnahme liefert MindestbestandWarnung bei Unterschreitung', async () => {
+    // A(3) hat mindestbestand=5
+    await createEinlagerung({ artikelId: A(3), standortId: S(1), menge: 6, erstelltVon: 't' })
+    const r = await createEntnahme({
+      artikelId: A(3),
+      standortId: S(1),
+      menge: 2,
+      erstelltVon: 't',
+    })
+    // bestand nach Entnahme: 4 < mindestbestand 5
+    expect(r.mindestbestandWarnung).not.toBeNull()
+    expect(r.mindestbestandWarnung?.mindestbestand).toBe(5)
+    expect(r.mindestbestandWarnung?.bestand).toBe(4)
+  })
+
+  it('createEntnahme ohne Unterschreitung — keine MindestbestandWarnung', async () => {
+    await createEinlagerung({ artikelId: A(3), standortId: S(1), menge: 20, erstelltVon: 't' })
+    const r = await createEntnahme({
+      artikelId: A(3),
+      standortId: S(1),
+      menge: 5,
+      erstelltVon: 't',
+    })
+    expect(r.mindestbestandWarnung).toBeNull()
+  })
+
+  it('createUmlagerung liefert MindestbestandWarnung am Quellstandort', async () => {
+    await createEinlagerung({ artikelId: A(3), standortId: S(1), menge: 6, erstelltVon: 't' })
+    const r = await createUmlagerung({
+      artikelId: A(3),
+      vonId: S(1),
+      nachId: S(2),
+      menge: 2,
+      erstelltVon: 't',
+    })
+    expect(r.mindestbestandWarnung).not.toBeNull()
+    expect(r.mindestbestandWarnung?.standortId).toBe(S(1))
   })
 })

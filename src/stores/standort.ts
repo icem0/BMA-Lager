@@ -73,8 +73,11 @@ export const useStandortStore = defineStore('standort', () => {
     }
     await getDb().transaction('rw', getDb().standorte, async () => {
       if (s.standard) {
+        // Indexierter Zugriff auf `standard` (Dexie v5+).
+        // IndexedDB speichert booleans als 0/1 — `equals(1)` = `true`.
         await getDb()
-          .standorte.filter((x) => x.standard === true)
+          .standorte.where('standard')
+          .equals(1)
           .modify({ standard: false })
       }
       await getDb().standorte.add(s)
@@ -87,7 +90,8 @@ export const useStandortStore = defineStore('standort', () => {
     const now = jetztIso()
     await getDb().transaction('rw', getDb().standorte, async () => {
       await getDb()
-        .standorte.filter((x) => x.standard === true)
+        .standorte.where('standard')
+        .equals(1)
         .modify({ standard: false, geaendertAm: now })
       await getDb().standorte.update(id, { standard: true, geaendertAm: now })
     })

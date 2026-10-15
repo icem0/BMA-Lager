@@ -10,11 +10,54 @@ import { queueOp } from '../services/sync/worker'
 import {
   BereitsStorniertError,
   GleicherStandortError,
+  MindestbestandWarnung,
   NegativerBestandWarnung,
   PflichtfeldFehltError,
+  UnbekannteReferenzError,
 } from './errors'
-import { assertMengePositiv, assertPflichtfeld } from './validierung'
+import { assertKeinZukunftsDatum, assertMengePositiv, assertPflichtfeld } from './validierung'
 import { berechneBestand } from './bestand'
+
+/**
+ * Prüft, dass Artikel- und Standort-IDs in der lokalen DB existieren.
+ * Wirft `UnbekannteReferenzError` (PWA-Variante), wenn eine Referenz fehlt.
+ * Spiegelt den Referenz-Check auf dem Server-Resolver.
+ * Gibt den gefundenen Artikel zurück, damit nachfolgende Logik
+ * (z. B. Mindestbestand) ihn ohne erneutes Lookup verwenden kann.
+ */
+async function assertReferenzenExistieren(
+  artikelId: string,
+  standortId: string,
+  zielId?: string | null,
+): Promise<import('../db/types').Artikel> {
+  const db = getDb()
+  const [artikel, standort, ziel] = await Promise.all([
+    db.artikel.get(artikelId),
+    db.standorte.get(standortId),
+    zielId ? db.standorte.get(zielId) : Promise.resolve(undefined),
+  ])
+  if (!artikel) throw new UnbekannteReferenzError('artikel', artikelId)
+  if (!standort) throw new UnbekannteReferenzError('standort', standortId)
+  if (zielId && !ziel) throw new UnbekannteReferenzError('standort', zielId)
+  return artikel
+}
+
+/**
+ * Erzeugt ggf. eine `MindestbestandWarnung`, wenn der voraussichtliche
+ * Bestand nach einer Entnahme den Mindestbestand des Artikels
+ * unterschreitet. Gibt `null` zurück, wenn der Artikel keinen
+ * `mindestbestand` gesetzt hat oder der Bestand darüber bleibt.
+ */
+function mindestbestandWarnung(
+  artikelId: string,
+  standortId: string,
+  neuerBestand: number,
+  mindestbestand: number | null,
+): MindestbestandWarnung | null {
+  if (mindestbestand === null) return null
+  if (neuerBestand >= mindestbestand) return null
+  return new MindestbestandWarnung(artikelId, standortId, neuerBestand, mindestbestand)
+}
 
 function standardEingabeZuBuchung(
   eingabe: BuchungsEingabe,
@@ -60,6 +103,8 @@ export async function createEinlagerung(eingabe: BuchungsEingabe): Promise<Buchu
   assertPflichtfeld('artikelId', eingabe.artikelId)
   assertPflichtfeld('standortId', eingabe.standortId)
   assertPflichtfeld('erstelltVon', eingabe.erstelltVon)
+  if (eingabe.erstelltAm) assertKeinZukunftsDatum(eingabe.erstelltAm)
+  await assertReferenzenExistieren(eingabe.artikelId, eingabe.standortId)
   const db = getDb()
   const buchung = standardEingabeZuBuchung(eingabe, 'einlagerung')
   await db.transaction('rw', db.buchungen, db.auditLog, db.outbox, async () => {
@@ -73,6 +118,7 @@ export async function createEinlagerung(eingabe: BuchungsEingabe): Promise<Buchu
 export interface EntnahmeErgebnis {
   buchung: Buchung
   warnung: NegativerBestandWarnung | null
+  mindestbestandWarnung: MindestbestandWarnung | null
 }
 
 export async function createEntnahme(eingabe: BuchungsEingabe): Promise<EntnahmeErgebnis> {
@@ -80,11 +126,14 @@ export async function createEntnahme(eingabe: BuchungsEingabe): Promise<Entnahme
   assertPflichtfeld('artikelId', eingabe.artikelId)
   assertPflichtfeld('standortId', eingabe.standortId)
   assertPflichtfeld('erstelltVon', eingabe.erstelltVon)
+  if (eingabe.erstelltAm) assertKeinZukunftsDatum(eingabe.erstelltAm)
+  const artikel = await assertReferenzenExistieren(eingabe.artikelId, eingabe.standortId)
   const db = getDb()
 
   // Bestand muss innerhalb der Transaktion berechnet werden,
   // damit er den aktuellen Stand sieht.
   let warnung: NegativerBestandWarnung | null = null
+  let mindest: MindestbestandWarnung | null = null
   const buchung = standardEingabeZuBuchung(eingabe, 'entnahme', { menge: -eingabe.menge })
 
   await db.transaction('rw', db.buchungen, db.auditLog, db.outbox, async () => {
@@ -98,11 +147,17 @@ export async function createEntnahme(eingabe: BuchungsEingabe): Promise<Entnahme
         eingabe.menge,
       )
     }
+    mindest = mindestbestandWarnung(
+      eingabe.artikelId,
+      eingabe.standortId,
+      bestand - eingabe.menge,
+      artikel.mindestbestand,
+    )
     await db.buchungen.add(buchung)
     await queueOp('buchung', 'create', buchung)
     await auditSchreiben('createEntnahme', buchung)
   })
-  return { buchung, warnung }
+  return { buchung, warnung, mindestbestandWarnung: mindest }
 }
 
 export interface UmlagerungEingabe {
@@ -122,6 +177,7 @@ export interface UmlagerungErgebnis {
   einlagerung: Buchung
   paarId: string
   warnung: NegativerBestandWarnung | null
+  mindestbestandWarnung: MindestbestandWarnung | null
 }
 
 export async function createUmlagerung(e: UmlagerungEingabe): Promise<UmlagerungErgebnis> {
@@ -131,6 +187,8 @@ export async function createUmlagerung(e: UmlagerungEingabe): Promise<Umlagerung
   assertPflichtfeld('nachId', e.nachId)
   assertPflichtfeld('erstelltVon', e.erstelltVon)
   if (e.vonId === e.nachId) throw new GleicherStandortError()
+  if (e.erstelltAm) assertKeinZukunftsDatum(e.erstelltAm)
+  const artikel = await assertReferenzenExistieren(e.artikelId, e.vonId, e.nachId)
 
   const db = getDb()
   const paarId = neueUuid()
@@ -156,6 +214,7 @@ export async function createUmlagerung(e: UmlagerungEingabe): Promise<Umlagerung
   }
   const einlagerung: Buchung = { ...entnahme, id: neueUuid(), standortId: e.nachId, menge: e.menge }
   let warnung: NegativerBestandWarnung | null = null
+  let mindest: MindestbestandWarnung | null = null
 
   await db.transaction('rw', db.buchungen, db.auditLog, db.outbox, async () => {
     const aktuelle = await db.buchungen.where('artikelId').equals(e.artikelId).toArray()
@@ -163,6 +222,7 @@ export async function createUmlagerung(e: UmlagerungEingabe): Promise<Umlagerung
     if (bestand < e.menge) {
       warnung = new NegativerBestandWarnung(e.artikelId, e.vonId, bestand, e.menge)
     }
+    mindest = mindestbestandWarnung(e.artikelId, e.vonId, bestand - e.menge, artikel.mindestbestand)
     await db.buchungen.bulkAdd([entnahme, einlagerung])
     await Promise.all([
       queueOp('buchung', 'create', entnahme),
@@ -171,7 +231,7 @@ export async function createUmlagerung(e: UmlagerungEingabe): Promise<Umlagerung
     await auditSchreiben('createUmlagerung.entnahme', entnahme)
     await auditSchreiben('createUmlagerung.einlagerung', einlagerung)
   })
-  return { entnahme, einlagerung, paarId, warnung }
+  return { entnahme, einlagerung, paarId, warnung, mindestbestandWarnung: mindest }
 }
 
 export interface InventurEingabe {
@@ -197,6 +257,8 @@ export async function createInventur(e: InventurEingabe): Promise<InventurErgebn
   assertPflichtfeld('artikelId', e.artikelId)
   assertPflichtfeld('standortId', e.standortId)
   assertPflichtfeld('erstelltVon', e.erstelltVon)
+  if (e.erstelltAm) assertKeinZukunftsDatum(e.erstelltAm)
+  await assertReferenzenExistieren(e.artikelId, e.standortId)
   const db = getDb()
   const now = jetztIso()
   let vorher = 0

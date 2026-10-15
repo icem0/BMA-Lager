@@ -26,6 +26,7 @@ der ENV und nutzt sie mit Fallback auf `git rev-parse` (lokal).
 ## Code-Qualität
 
 - **TypeScript** – kein ungetypter Code in neu geschriebenen Dateien.
+- **Code-Kommentare auf Englisch.** Inline-Kommentare, JSDoc/TSDoc und sonstige Quelltext-Kommentare sind in englischer Sprache zu verfassen. Identifiers, Strings, UI-Labels und Commit-Messages bleiben projektspezifisch (Deutsch ist okay, sofern bestehend).
 - **Nach Änderungen** sind Lint und Tests auszuführen:
   - `npm run lint`
   - `npm test`

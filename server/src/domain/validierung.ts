@@ -11,6 +11,17 @@ const iso = z.string().refine((s) => !Number.isNaN(Date.parse(s)), {
   message: 'muss ISO-8601-Datum sein',
 })
 
+// ---------- Zukunfts-Daten (Client/Server-Clock-Drift-tolerant) ----------
+// Buchungen mit Zukunfts-Datum sind ein klassischer Eingabefehler — wir
+// lehnen sie ab, sobald der Wert > jetzt + 1 Minute ist.
+
+const isoKeineZukunft = z
+  .string()
+  .refine((s) => !Number.isNaN(Date.parse(s)), { message: 'muss ISO-8601-Datum sein' })
+  .refine((s) => Date.parse(s) - 60_000 <= Date.now(), {
+    message: 'Datum liegt in der Zukunft',
+  })
+
 // ---------- IDs ----------
 
 const id = z.string().min(1, 'ID erforderlich')
@@ -63,7 +74,7 @@ export const buchungSchema = z.object({
   menge: z.number().int(),
   paarId: z.string().nullable().optional(),
   projekt: z.string().nullable().optional(),
-  erstelltAm: iso,
+  erstelltAm: isoKeineZukunft,
   clientEingabeAm: iso.nullable().optional(),
   erstelltVon: id,
   kommentar: z.string().nullable().optional(),
@@ -71,6 +82,22 @@ export const buchungSchema = z.object({
   stornoVon: z.string().nullable().optional(),
   storno: z.boolean(),
   storniertDurch: z.string().nullable().optional(),
+})
+
+// ---------- Einstellungen ----------
+// Cross-Device-Sync: PWA-Einstellungen (sprache, standardStandortId,
+// artikelTypen) werden in der DB gespiegelt. Whitelist der erlaubten
+// Keys — alles andere wird vom Server abgelehnt.
+
+export const EINSTELLUNG_KEYS = ['sprache', 'standardStandortId', 'artikelTypen'] as const
+export type EinstellungKey = (typeof EINSTELLUNG_KEYS)[number]
+
+export const einstellungSchema = z.object({
+  key: z.enum(EINSTELLUNG_KEYS),
+  /** null = global (z. B. artikelTypen), sonst User-spezifisch. */
+  userId: z.string().nullable(),
+  value: z.string(),
+  geaendertAm: iso,
 })
 
 // ---------- Sync-Push ----------
@@ -100,6 +127,12 @@ export const pushPayloadSchema = z.object({
           op: z.literal('create'), // Buchungen sind append-only: nur create
           entity: z.literal('buchung'),
           payload: buchungSchema,
+        }),
+        z.object({
+          // Einstellungen: nur upsert. key+userId ist die Identität.
+          op: z.literal('upsert'),
+          entity: z.literal('einstellung'),
+          payload: einstellungSchema,
         }),
       ]),
     )

@@ -90,7 +90,15 @@ export interface Projekt {
 
 export interface Einstellung {
   key: string
+  /**
+   * null = global (z. B. artikelTypen, vom Admin gepflegt).
+   * Sonst: User-spezifisch (z. B. sprache, standardStandortId).
+   * Identität in IndexedDB: Compound [key+userId].
+   */
+  userId: string | null
   value: string
+  /** LWW-Conflict-Resolution auf dem Server. */
+  geaendertAm: Iso
 }
 
 export interface AuditLogEintrag {
@@ -120,8 +128,8 @@ export interface BuchungsEingabe {
 
 // ---------- Sync (PLAN §4.7–4.9) ----------
 
-export type OutboxEntity = 'artikel' | 'buchung' | 'standort' | 'projekt' | 'foto'
-export type OutboxOp = 'create' | 'update' | 'delete' | 'upload'
+export type OutboxEntity = 'artikel' | 'buchung' | 'standort' | 'projekt' | 'foto' | 'einstellung'
+export type OutboxOp = 'create' | 'update' | 'delete' | 'upload' | 'upsert'
 
 export interface OutboxEintrag {
   id: string

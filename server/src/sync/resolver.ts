@@ -9,11 +9,11 @@
 //
 // Alles in einer DB-Transaktion pro Push-Batch.
 
-import { eq } from 'drizzle-orm'
+import { and, eq, isNull } from 'drizzle-orm'
 import { z } from 'zod'
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js'
 import * as schema from '../db/schema.js'
-import { artikel, buchungen, projekte, standorte, auditLog } from '../db/schema.js'
+import { artikel, buchungen, einstellungen, projekte, standorte, auditLog } from '../db/schema.js'
 import { berechneBestand } from '../domain/bestand.js'
 import {
   NegativerBestandError,
@@ -48,6 +48,11 @@ const pushSchema = z.discriminatedUnion('entity', [
     entity: z.literal('buchung'),
     payload: z.any(),
   }),
+  z.object({
+    op: z.literal('upsert'),
+    entity: z.literal('einstellung'),
+    payload: z.any(),
+  }),
 ])
 
 export interface ResolverResult {
@@ -68,6 +73,7 @@ export async function resolvePush(
   db: PostgresJsDatabase<typeof schema>,
   ops: ReadonlyArray<PushOp>,
   benutzerId: string,
+  benutzerRolle: 'admin' | 'user' = 'user',
 ): Promise<ResolverResult> {
   const result: ResolverResult = { accepted: [], conflicts: [], errors: [] }
 
@@ -87,20 +93,27 @@ export async function resolvePush(
           case 'buchung':
             await resolveBuchung(tx, op, db)
             break
+          case 'einstellung':
+            await resolveEinstellung(tx, op, benutzerId, benutzerRolle)
+            break
         }
 
         // Audit-Log
+        const entitaetId =
+          op.entity === 'einstellung'
+            ? `${op.payload.key}#${op.payload.userId ?? 'global'}`
+            : op.payload.id
         await tx.insert(auditLog).values({
           id: crypto.randomUUID(),
           aktion: op.op,
           entitaet: op.entity,
-          entitaetId: op.payload.id,
+          entitaetId,
           benutzerId,
           daten: { op: op.op, entity: op.entity },
           zeit: new Date(),
         })
 
-        result.accepted.push(op.payload.id)
+        result.accepted.push(entitaetId)
       })
     } catch (err) {
       if (err instanceof ConflictError) {
@@ -281,4 +294,73 @@ async function resolveBuchung(
 
   // 4) Insert
   await tx.insert(buchungen).values(b as never)
+}
+
+// ---------- Einstellungs-Resolver ----------
+// Whitelist der erlaubten Keys. artikelTypen ist global und nur von
+// Admins pflegbar. sprache und standardStandortId sind pro User.
+const ADMIN_ONLY_KEYS = new Set<string>(['artikelTypen'])
+
+async function resolveEinstellung(
+  tx: Tx,
+  op: Extract<PushOp, { entity: 'einstellung' }>,
+  benutzerId: string,
+  benutzerRolle: 'admin' | 'user',
+): Promise<void> {
+  const p = op.payload as {
+    key: string
+    userId: string | null
+    value: string
+    geaendertAm: string
+  }
+
+  // 1) Rollen-Check: artikelTypen (global) nur durch Admins
+  if (p.userId === null && ADMIN_ONLY_KEYS.has(p.key) && benutzerRolle !== 'admin') {
+    throw new ValidationError(
+      'einstellung.userId',
+      `Key "${p.key}" ist global und darf nur von Admins geschrieben werden`,
+    )
+  }
+
+  // 2) Wenn userId gesetzt: muss dem JWT-Sub entsprechen
+  if (p.userId !== null && p.userId !== benutzerId) {
+    throw new ValidationError(
+      'einstellung.userId',
+      'Eine fremde User-ID ist nicht erlaubt',
+    )
+  }
+
+  // 3) LWW-Upsert auf (key, userId)
+  const incomingGeaendertAm = new Date(p.geaendertAm)
+  const where = and(
+    eq(einstellungen.key, p.key),
+    p.userId === null
+      ? isNull(einstellungen.userId)
+      : eq(einstellungen.userId, p.userId),
+  )
+  const existing = await tx.select().from(einstellungen).where(where).limit(1)
+  if (existing.length === 0) {
+    await tx.insert(einstellungen).values({
+      key: p.key,
+      userId: p.userId,
+      value: p.value,
+      geaendertAm: incomingGeaendertAm,
+    })
+    return
+  }
+  // Nur überschreiben, wenn die eingehende Version neuer ist.
+  // Auch hier: Drizzle-string-vs-Date normalisieren.
+  const existingRow = existing[0]
+  if (!existingRow) return
+  const existingGeaendertAm =
+    existingRow.geaendertAm instanceof Date
+      ? existingRow.geaendertAm
+      : new Date(existingRow.geaendertAm as unknown as string)
+  if (incomingGeaendertAm.getTime() <= existingGeaendertAm.getTime()) {
+    return
+  }
+  await tx
+    .update(einstellungen)
+    .set({ value: p.value, geaendertAm: incomingGeaendertAm })
+    .where(where)
 }

@@ -139,6 +139,7 @@ export async function fotoRoutes(app: FastifyInstance): Promise<void> {
         .select()
         .from(fotos)
         .where(eq(fotos.artikelId, req.params.artikelId))
+        .orderBy(fotos.erstelltAm)
       return reply.send(
         rows.map((r) => ({
           id: r.id,

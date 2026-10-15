@@ -48,3 +48,35 @@ export class NegativerBestandWarnung extends BuchungsError {
     )
   }
 }
+
+export class ZukunftsDatumError extends BuchungsError {
+  constructor(
+    public readonly feld: string,
+    public readonly datum: string,
+  ) {
+    super(`Datum ${datum} im Feld ${feld} liegt in der Zukunft`, 'ZUKUNFTS_DATUM')
+  }
+}
+
+export class UnbekannteReferenzError extends BuchungsError {
+  constructor(
+    public readonly entity: 'artikel' | 'standort',
+    public readonly id: string,
+  ) {
+    super(`Unbekannte ${entity}-ID: ${id}`, 'UNBEKANNTE_REFERENZ')
+  }
+}
+
+export class MindestbestandWarnung extends BuchungsError {
+  constructor(
+    public readonly artikelId: string,
+    public readonly standortId: string,
+    public readonly bestand: number,
+    public readonly mindestbestand: number,
+  ) {
+    super(
+      `Bestand ${bestand} an Standort ${standortId} unterschreitet Mindestbestand ${mindestbestand}`,
+      'MINDESTBESTAND',
+    )
+  }
+}

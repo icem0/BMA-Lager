@@ -1,9 +1,9 @@
 // Sync-Routes: GET /api/sync/snapshot, GET /api/sync/status, POST /api/sync/push.
 
 import type { FastifyInstance } from 'fastify'
-import { sql } from 'drizzle-orm'
+import { and, eq, isNull, or, sql } from 'drizzle-orm'
 import { getDb } from '../db/client.js'
-import { artikel, buchungen, projekte, standorte } from '../db/schema.js'
+import { artikel, buchungen, einstellungen, projekte, standorte } from '../db/schema.js'
 import { pushPayloadSchema, snapshotQuerySchema } from '../domain/validierung.js'
 import { resolvePush } from './resolver.js'
 
@@ -40,13 +40,26 @@ export async function syncRoutes(app: FastifyInstance): Promise<void> {
       const since = parsed.data.since ? new Date(parsed.data.since) : new Date(0)
       const sinceIso = since.toISOString()
       const db = getDb()
+      const user = req.authUser
+      if (!user) return reply.code(401).send({ code: 'UNAUTHORIZED' })
 
-      const [artikelRows, standortRows, projektRows, buchungRows] = await Promise.all([
-        db.select().from(artikel).where(sql`${artikel.geaendertAm} > ${sinceIso}`),
-        db.select().from(standorte).where(sql`${standorte.geaendertAm} > ${sinceIso}`),
-        db.select().from(projekte).where(sql`${projekte.geaendertAm} > ${sinceIso}`),
-        db.select().from(buchungen).where(sql`${buchungen.erstelltAm} > ${sinceIso}`),
-      ])
+      const [artikelRows, standortRows, projektRows, buchungRows, einstellungRows] =
+        await Promise.all([
+          db.select().from(artikel).where(sql`${artikel.geaendertAm} > ${sinceIso}`),
+          db.select().from(standorte).where(sql`${standorte.geaendertAm} > ${sinceIso}`),
+          db.select().from(projekte).where(sql`${projekte.geaendertAm} > ${sinceIso}`),
+          db.select().from(buchungen).where(sql`${buchungen.erstelltAm} > ${sinceIso}`),
+          // Einstellungen: alle globalen + die des eingeloggten Users
+          db
+            .select()
+            .from(einstellungen)
+            .where(
+              and(
+                sql`${einstellungen.geaendertAm} > ${sinceIso}`,
+                or(isNull(einstellungen.userId), eq(einstellungen.userId, user.sub)),
+              ),
+            ),
+        ])
 
       return reply.send({
         serverTime: new Date().toISOString(),
@@ -55,6 +68,12 @@ export async function syncRoutes(app: FastifyInstance): Promise<void> {
         standorte: standortRows,
         projekte: projektRows,
         buchungen: buchungRows,
+        einstellungen: einstellungRows.map((r) => ({
+          key: r.key,
+          userId: r.userId,
+          value: r.value,
+          geaendertAm: r.geaendertAm.toISOString(),
+        })),
       })
     },
   )
@@ -88,7 +107,7 @@ export async function syncRoutes(app: FastifyInstance): Promise<void> {
       if (!user) return reply.code(401).send({ code: 'UNAUTHORIZED' })
 
       const db = getDb()
-      const result = await resolvePush(db, parsed.data.ops, user.sub)
+      const result = await resolvePush(db, parsed.data.ops, user.sub, user.rolle)
 
       return reply.send(result)
     },

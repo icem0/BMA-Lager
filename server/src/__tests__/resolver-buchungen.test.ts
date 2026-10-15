@@ -55,3 +55,77 @@ describe('resolvePush-Signatur', () => {
     expect(Array.isArray(ops)).toBe(true)
   })
 })
+
+describe('pushPayloadSchema — einstellung', () => {
+  it('akzeptiert gültigen upsert auf globalen Key', () => {
+    const r = pushPayloadSchema.safeParse({
+      ops: [
+        {
+          op: 'upsert',
+          entity: 'einstellung',
+          payload: {
+            key: 'artikelTypen',
+            userId: null,
+            value: '["A","B"]',
+            geaendertAm: '2025-04-14T11:00:00.000Z',
+          },
+        },
+      ],
+    })
+    expect(r.success).toBe(true)
+  })
+
+  it('akzeptiert gültigen upsert auf per-user-Key', () => {
+    const r = pushPayloadSchema.safeParse({
+      ops: [
+        {
+          op: 'upsert',
+          entity: 'einstellung',
+          payload: {
+            key: 'sprache',
+            userId: 'user-123',
+            value: 'de',
+            geaendertAm: '2025-04-14T11:00:00.000Z',
+          },
+        },
+      ],
+    })
+    expect(r.success).toBe(true)
+  })
+
+  it('lehnt unbekannte Keys ab (Whitelist)', () => {
+    const r = pushPayloadSchema.safeParse({
+      ops: [
+        {
+          op: 'upsert',
+          entity: 'einstellung',
+          payload: {
+            key: 'fremderKey',
+            userId: null,
+            value: 'x',
+            geaendertAm: '2025-04-14T11:00:00.000Z',
+          },
+        },
+      ],
+    })
+    expect(r.success).toBe(false)
+  })
+
+  it('lehnt andere Ops als upsert ab (Settings sind nur upsert)', () => {
+    const r = pushPayloadSchema.safeParse({
+      ops: [
+        {
+          op: 'create',
+          entity: 'einstellung',
+          payload: {
+            key: 'sprache',
+            userId: 'u1',
+            value: 'de',
+            geaendertAm: '2025-04-14T11:00:00.000Z',
+          },
+        },
+      ],
+    })
+    expect(r.success).toBe(false)
+  })
+})

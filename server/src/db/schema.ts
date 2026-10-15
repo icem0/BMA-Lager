@@ -83,6 +83,8 @@ export const artikel = pgTable(
     index('artikel_sharepoint_idx').on(t.sharePointId),
     index('artikel_typ_idx').on(t.typ),
     index('artikel_status_idx').on(t.status),
+    // Sync-Snapshot filtert auf `geaendert_am > since` — Index ist Pflicht.
+    index('artikel_geaendert_am_idx').on(t.geaendertAm),
   ],
 )
 
@@ -103,6 +105,8 @@ export const standorte = pgTable(
     uniqueIndex('standorte_name_idx').on(t.name),
     index('standorte_typ_idx').on(t.typ),
     index('standorte_archiviert_idx').on(t.archiviert),
+    // Sync-Snapshot filtert auf `geaendert_am > since` — Index ist Pflicht.
+    index('standorte_geaendert_am_idx').on(t.geaendertAm),
   ],
 )
 
@@ -119,6 +123,8 @@ export const projekte = pgTable(
   (t) => [
     uniqueIndex('projekte_nummer_idx').on(t.nummer),
     index('projekte_archiviert_idx').on(t.archiviert),
+    // Sync-Snapshot filtert auf `geaendert_am > since` — Index ist Pflicht.
+    index('projekte_geaendert_am_idx').on(t.geaendertAm),
   ],
 )
 
@@ -197,7 +203,7 @@ export const auditLog = pgTable(
     id: text('id').primaryKey(),
     aktion: text('aktion').notNull(),
     entitaet: text('entitaet', {
-      enum: ['artikel', 'standort', 'buchung', 'projekt', 'foto', 'user'],
+      enum: ['artikel', 'standort', 'buchung', 'projekt', 'foto', 'user', 'einstellung'],
     }).notNull(),
     entitaetId: text('entitaet_id').notNull(),
     benutzerId: text('benutzer_id'),
@@ -211,6 +217,27 @@ export const auditLog = pgTable(
   ],
 )
 
+/**
+ * Benutzer- und Konfigurations-Einstellungen (Cross-Device-Sync).
+ * - user_id IS NULL  → global (z. B. artikelTypen, vom Admin gepflegt)
+ * - user_id = <id>   → pro User (z. B. sprache, standardStandortId)
+ * Primary Key (key, user_id) — jede Variante ist eindeutig.
+ */
+export const einstellungen = pgTable(
+  'einstellungen',
+  {
+    key: text('key').notNull(),
+    userId: text('user_id').references(() => users.id, { onDelete: 'cascade' }),
+    value: text('value').notNull(),
+    geaendertAm: timestamp('geaendert_am', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.key, t.userId] }),
+    index('einstellungen_user_idx').on(t.userId),
+    index('einstellungen_geaendert_am_idx').on(t.geaendertAm),
+  ],
+)
+
 // ---------- Hilfstabellen für Aggregat ----------
 
 /**
@@ -218,5 +245,3 @@ export const auditLog = pgTable(
  * `buchungen`-Tabellendefinition oben integriert
  * (`buchungen_bestand_idx`).
  */
-
-void primaryKey // verhindert unused-Import-Warning, falls Drizzle sich ändert

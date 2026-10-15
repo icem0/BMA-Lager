@@ -53,3 +53,46 @@ describe('applyLastWriterWinsMock (Server-Version)', () => {
     ).not.toThrow()
   })
 })
+
+// Regression: Drizzle's postgres-js-Driver liefert `timestamp with timezone`
+// als ISO-String, nicht als Date. Der Resolver muss das normalisieren, bevor
+// `applyLastWriterWinsMock` darauf `.toISOString()` ruft.
+describe('Resolver — Drizzle-string-gaendertAm Normalisierung', () => {
+  it('wirft NICHT, wenn serverGeaendertAm als String ankommt (postgres-js-Driver)', () => {
+    // Simuliert das, was Drizzle zurückgibt: ein ISO-String statt Date.
+    const serverGeaendertAmString = '2026-10-14T11:00:00.000Z'
+    const incomingGeaendertAm = new Date('2026-10-14T12:00:00.000Z')
+
+    // Der Fix: vor applyLastWriterWinsMock in Date wrappen.
+    const normalized =
+      serverGeaendertAmString instanceof Date
+        ? serverGeaendertAmString
+        : new Date(serverGeaendertAmString)
+
+    expect(() =>
+      applyLastWriterWinsMock({
+        serverGeaendertAm: normalized,
+        incomingGeaendertAm,
+        id: 'a1',
+      }),
+    ).not.toThrow()
+  })
+
+  it('erkennt Konflikt korrekt, wenn String-Timestamp vom Server neuer ist', () => {
+    const serverGeaendertAmString = '2026-10-14T13:00:00.000Z' // Server ist NEUER
+    const incomingGeaendertAm = new Date('2026-10-14T12:00:00.000Z')
+
+    const normalized =
+      serverGeaendertAmString instanceof Date
+        ? serverGeaendertAmString
+        : new Date(serverGeaendertAmString)
+
+    expect(() =>
+      applyLastWriterWinsMock({
+        serverGeaendertAm: normalized,
+        incomingGeaendertAm,
+        id: 'a1',
+      }),
+    ).toThrow(/neuer/)
+  })
+})
