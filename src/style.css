@@ -748,12 +748,7 @@ label.check {
 .card-list-item .card-list-actions button {
   flex: 1 1 auto;
   min-height: 2.5rem;
-}
-@media (max-width: 720px) {
-  .card-list-item .card-list-actions .btn,
-  .card-list-item .card-list-actions button {
-    flex: 1 1 calc(50% - 0.25rem);
-  }
+  width: 100%;
 }
 
 /* Auf Mobile ausblenden — wird in App.vue per data-layout gesteuert. */

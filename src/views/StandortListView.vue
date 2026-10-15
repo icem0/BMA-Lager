@@ -157,7 +157,7 @@ const istLeer = computed(() => sichtbareStandorte.value.length === 0 && !formula
       </label>
     </div>
 
-    <table v-if="!istLeer" class="data">
+    <table v-if="!istLeer" class="data desktop-only">
       <thead>
         <tr>
           <th>{{ t('view.standort.spalten.name') }}</th>
@@ -194,6 +194,34 @@ const istLeer = computed(() => sichtbareStandorte.value.length === 0 && !formula
         </tr>
       </tbody>
     </table>
+
+    <ul v-if="!istLeer" class="card-list mobile-only" role="list">
+      <li
+        v-for="s in sichtbareStandorte"
+        :key="s.id"
+        class="card-list-item"
+        :class="{ archived: s.archiviert }"
+      >
+        <span class="card-list-title">{{ s.name }}</span>
+        <div class="card-list-meta">
+          <span class="badge">{{ t(`view.standort.typen.${s.typ}`) }}</span>
+          <span v-if="s.projekt" class="muted">{{ s.projekt }}</span>
+          <span v-if="s.kennzeichen" class="muted">{{ s.kennzeichen }}</span>
+          <span v-if="s.standard" class="badge accent">{{ t('view.common.ja') }}</span>
+        </div>
+        <div class="card-list-actions">
+          <button v-if="!s.archiviert && !s.standard" type="button" @click="setStandard(s.id)">
+            {{ t('view.standort.spalten.standard') }}
+          </button>
+          <button v-if="!s.archiviert" type="button" class="danger" @click="archivieren(s.id)">
+            {{ t('view.artikel.detail.archivieren') }}
+          </button>
+          <button v-else type="button" @click="wiederherstellen(s.id)">
+            {{ t('view.standort.wiederherstellen') }}
+          </button>
+        </div>
+      </li>
+    </ul>
   </section>
 </template>
 
@@ -211,6 +239,14 @@ const istLeer = computed(() => sichtbareStandorte.value.length === 0 && !formula
 
 .data tr.archived td {
   color: var(--text-muted, #888);
+  text-decoration: line-through;
+}
+
+.card-list-item.archived {
+  color: var(--text-muted, #888);
+}
+
+.card-list-item.archived .card-list-title {
   text-decoration: line-through;
 }
 </style>
