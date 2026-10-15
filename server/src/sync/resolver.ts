@@ -145,10 +145,7 @@ export async function resolvePush(
             break
         }
 
-        const entitaetId =
-          op.entity === 'einstellung'
-            ? `${op.payload.key}#${op.payload.userId ?? 'global'}`
-            : op.payload.id
+        const entitaetId = entitaetIdFor(op)
         await tx.insert(auditLog).values({
           id: crypto.randomUUID(),
           aktion: op.op,
@@ -162,11 +159,31 @@ export async function resolvePush(
         result.accepted.push(entitaetId)
       })
     } catch (err) {
-      pushBuchungsError(result, op.payload.id, err)
+      // Fehler-ID muss mit dem IDENTIFIERS übereinstimmen, den der Client
+      // zum Matchen benutzt (Stammdaten: `payload.id`, Einstellungen:
+      // `key#userId`). Vorher war das hart `op.payload.id`, was bei
+      // Einstellungen `undefined` ergab — der Client hätte den Fehler
+      // dann nicht dem Outbox-Item zuordnen können und es endlos neu
+      // gepusht bis zur Quarantäne.
+      pushBuchungsError(result, entitaetIdFor(op), err)
     }
   }
 
   return result
+}
+
+/**
+ * Liefert die ID, unter der der Client dieses Op in `result.accepted` /
+ * `result.errors` / `result.conflicts` wiederfindet. Spiegel der
+ * `payloadIdFor`-Logik im Worker.
+ */
+function entitaetIdFor(op: PushOp): string {
+  if (op.entity === 'einstellung') {
+    const p = op.payload as { key?: unknown; userId?: unknown }
+    const userPart = p.userId === null || p.userId === undefined ? 'global' : p.userId
+    return `${String(p.key)}#${String(userPart)}`
+  }
+  return (op.payload as { id: string }).id
 }
 
 /**

@@ -827,3 +827,318 @@ describe('Sync — Outbox-Quarantäne', () => {
 afterEach(() => {
   vi.unstubAllGlobals()
 })
+
+// ---------- Regression: einstellung/upsert muss pushbar sein ----------
+//
+// Vor dem Fix hat der Worker pauschal `payload.id` als Identität verlangt.
+// Einstellungen haben aber kein `id`-Feld — ihre Identität ist der
+// Compound-Key (key, userId), identisch zur Server-Antwort in
+// `result.accepted`. Folge war: jedes einstellung-Outbox-Item lief
+// 5× in `MISSING_PAYLOAD_ID` und wurde dann quarantiniert (siehe
+// Outbox-Diagnose "Versuch 3: MISSING_PAYLOAD_ID", 4 Items).
+describe('Sync — payloadIdFor (Einstellungen haben keine `id`)', () => {
+  it('Stammdaten: payload.id wird durchgereicht', async () => {
+    const { payloadIdFor } = await import('../worker')
+    expect(payloadIdFor('artikel', { id: 'a-1', titel: 'x' })).toBe('a-1')
+    expect(payloadIdFor('standort', { id: 's-1' })).toBe('s-1')
+    expect(payloadIdFor('projekt', { id: 'p-1' })).toBe('p-1')
+    expect(payloadIdFor('buchung', { id: 'b-1' })).toBe('b-1')
+  })
+
+  it('einstellung (per-User): key#userId', async () => {
+    const { payloadIdFor } = await import('../worker')
+    expect(payloadIdFor('einstellung', { key: 'sprache', userId: 'u1', value: 'de' })).toBe(
+      'sprache#u1',
+    )
+  })
+
+  it('einstellung (global): key#global', async () => {
+    const { payloadIdFor } = await import('../worker')
+    expect(payloadIdFor('einstellung', { key: 'artikelTypen', userId: null, value: '[]' })).toBe(
+      'artikelTypen#global',
+    )
+  })
+
+  it('null bei fehlendem id (Stammdaten ohne id) oder fehlendem key (einstellung)', async () => {
+    const { payloadIdFor } = await import('../worker')
+    expect(payloadIdFor('artikel', { titel: 'x' })).toBeNull()
+    expect(payloadIdFor('einstellung', { userId: 'u1', value: 'de' })).toBeNull()
+  })
+})
+
+describe('Sync — einstellung/upsert End-to-End', () => {
+  function einstellungPayload(key: string, userId: string | null, value: string) {
+    return { key, userId, value, geaendertAm: jetztIso() }
+  }
+
+  it('einstellung mit userId: Outbox-Item wird synced, Server accepted mit key#userId', async () => {
+    const e = einstellungPayload('sprache', 'u1', 'en-US')
+    await getDb().outbox.add({
+      id: neueUuid(),
+      entity: 'einstellung',
+      op: 'upsert',
+      payload: JSON.stringify(e),
+      createdAt: jetztIso(),
+      syncedAt: null,
+      attempts: 0,
+      lastError: null,
+      quarantinedAt: null,
+      quarantineReason: null,
+    })
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      const method = init?.method ?? 'GET'
+      if (url.endsWith('/api/sync/push') && method === 'POST') {
+        // Server accepted unter key#userId — Spiegel von
+        // server/src/sync/resolver.ts:entitaetIdFor
+        return new Response(
+          JSON.stringify({
+            accepted: ['sprache#u1'],
+            conflicts: [],
+            errors: [],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      if (url.includes('/api/sync/snapshot')) {
+        return new Response(
+          JSON.stringify({
+            serverTime: new Date().toISOString(),
+            since: '1970-01-01T00:00:00.000Z',
+            artikel: [],
+            standorte: [],
+            projekte: [],
+            buchungen: [],
+            einstellungen: [],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      if (url.endsWith('/api/sync/status')) {
+        return new Response(
+          JSON.stringify({
+            serverTime: new Date().toISOString(),
+            counts: { artikel: 0, standorte: 0, projekte: 0, buchungen: 0 },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      return new Response('not found', { status: 404 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { runSync } = await import('../worker')
+    await runSync({ token: null, apiBase: 'http://test.local' })
+
+    const remaining = await getDb().outbox.toArray()
+    expect(remaining.length).toBe(1)
+    expect(remaining[0]?.syncedAt).not.toBeNull()
+    expect(remaining[0]?.lastError).toBeNull()
+  })
+
+  it('einstellung global: Outbox-Item wird synced unter key#global', async () => {
+    const e = einstellungPayload('artikelTypen', null, '[]')
+    await getDb().outbox.add({
+      id: neueUuid(),
+      entity: 'einstellung',
+      op: 'upsert',
+      payload: JSON.stringify(e),
+      createdAt: jetztIso(),
+      syncedAt: null,
+      attempts: 0,
+      lastError: null,
+      quarantinedAt: null,
+      quarantineReason: null,
+    })
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url.endsWith('/api/sync/push') && init?.method === 'POST') {
+        return new Response(
+          JSON.stringify({ accepted: ['artikelTypen#global'], conflicts: [], errors: [] }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      if (url.includes('/api/sync/snapshot')) {
+        return new Response(
+          JSON.stringify({
+            serverTime: new Date().toISOString(),
+            since: '1970-01-01T00:00:00.000Z',
+            artikel: [],
+            standorte: [],
+            projekte: [],
+            buchungen: [],
+            einstellungen: [],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      if (url.endsWith('/api/sync/status')) {
+        return new Response(
+          JSON.stringify({
+            serverTime: new Date().toISOString(),
+            counts: { artikel: 0, standorte: 0, projekte: 0, buchungen: 0 },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      return new Response('not found', { status: 404 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { runSync } = await import('../worker')
+    await runSync({ token: null, apiBase: 'http://test.local' })
+
+    const remaining = await getDb().outbox.toArray()
+    expect(remaining[0]?.syncedAt).not.toBeNull()
+  })
+
+  it('Server-Validation-Error auf einstellung: Outbox-Item wird markiert (kein Endlos-Retry)', async () => {
+    // Wenn der Server eine Einstellung ablehnt (z. B. unbekannter Key),
+    // MUSS die Fehler-ID "key#userId" sein, sonst findet der Worker das
+    // passende Outbox-Item nicht und pusht es endlos weiter bis QUARANTINE.
+    const e = einstellungPayload('sprache', 'u1', 'en-US')
+    await getDb().outbox.add({
+      id: neueUuid(),
+      entity: 'einstellung',
+      op: 'upsert',
+      payload: JSON.stringify(e),
+      createdAt: jetztIso(),
+      syncedAt: null,
+      attempts: 0,
+      lastError: null,
+      quarantinedAt: null,
+      quarantineReason: null,
+    })
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url.endsWith('/api/sync/push') && init?.method === 'POST') {
+        return new Response(
+          JSON.stringify({
+            accepted: [],
+            conflicts: [],
+            errors: [
+              {
+                id: 'sprache#u1',
+                code: 'VALIDATION',
+                message: 'einstellung.userId: fremde User-ID',
+              },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      if (url.includes('/api/sync/snapshot')) {
+        return new Response(
+          JSON.stringify({
+            serverTime: new Date().toISOString(),
+            since: '1970-01-01T00:00:00.000Z',
+            artikel: [],
+            standorte: [],
+            projekte: [],
+            buchungen: [],
+            einstellungen: [],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      if (url.endsWith('/api/sync/status')) {
+        return new Response(
+          JSON.stringify({
+            serverTime: new Date().toISOString(),
+            counts: { artikel: 0, standorte: 0, projekte: 0, buchungen: 0 },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      return new Response('not found', { status: 404 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { runSync } = await import('../worker')
+    await runSync({ token: null, apiBase: 'http://test.local' })
+
+    const remaining = await getDb().outbox.toArray()
+    expect(remaining.length).toBe(1)
+    // Item ist NICHT synced, hat aber einen lastError, damit der User in
+    // der UI sieht, was los ist — und der Worker nicht endlos weiterpusht.
+    expect(remaining[0]?.syncedAt).toBeNull()
+    expect(remaining[0]?.lastError).toContain('VALIDATION')
+    expect(remaining[0]?.attempts).toBe(1)
+  })
+
+  it('Einstellungs-Diagnose (stuckItems/quarantinedItems): payloadId ist key#userId, nicht leer', async () => {
+    // In der Outbox-Diagnose war "payloadId" für Einstellungen leer —
+    // das war verwirrend. Mit dem Fix zeigt es den echten Compound-Key.
+    // Wir triggern den vollen Sync-Pfad: Server lehnt das Item ab, der
+    // Worker füllt lastFailure.stuckItems und quarantinedItems.
+    const e = einstellungPayload('sprache', 'u1', 'en-US')
+    await getDb().outbox.add({
+      id: neueUuid(),
+      entity: 'einstellung',
+      op: 'upsert',
+      payload: JSON.stringify(e),
+      createdAt: jetztIso(),
+      syncedAt: null,
+      attempts: 0,
+      lastError: null,
+      quarantinedAt: null,
+      quarantineReason: null,
+    })
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url.endsWith('/api/sync/push') && init?.method === 'POST') {
+        return new Response(
+          JSON.stringify({
+            accepted: [],
+            conflicts: [],
+            errors: [
+              {
+                id: 'sprache#u1',
+                code: 'VALIDATION',
+                message: 'einstellung.userId: fremde User-ID',
+              },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      if (url.includes('/api/sync/snapshot')) {
+        return new Response(
+          JSON.stringify({
+            serverTime: new Date().toISOString(),
+            since: '1970-01-01T00:00:00.000Z',
+            artikel: [],
+            standorte: [],
+            projekte: [],
+            buchungen: [],
+            einstellungen: [],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      if (url.endsWith('/api/sync/status')) {
+        return new Response(
+          JSON.stringify({
+            serverTime: new Date().toISOString(),
+            counts: { artikel: 0, standorte: 0, projekte: 0, buchungen: 0 },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      return new Response('not found', { status: 404 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { runSync, getSyncStatus } = await import('../worker')
+    await runSync({ token: null, apiBase: 'http://test.local' })
+
+    const st = getSyncStatus()
+    expect(st.lastFailure).not.toBeNull()
+    const stuckEinstellung = st.lastFailure?.stuckItems.find((s) => s.entity === 'einstellung')
+    expect(stuckEinstellung?.payloadId).toBe('sprache#u1')
+  })
+})

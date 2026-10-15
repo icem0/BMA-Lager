@@ -53,6 +53,38 @@ export function computeBackoffMs(attempts: number, capMs: number = BACKOFF_CAP_M
 }
 
 /**
+ * Bestimmt die Identität eines Outbox-Items innerhalb eines Push-Batches.
+ * Der Server referenziert jedes Item in `result.accepted` / `result.errors`
+ * / `result.conflicts` unter dieser ID, damit der Client das passende
+ * Outbox-Item markieren kann.
+ *
+ * Stammdaten (artikel, standort, projekt) und Buchungen haben eine UUID
+ * als `payload.id`. Einstellungen NICHT — dort ist die Identität der
+ * Compound-Key `(key, userId)`. Wir spiegeln die Server-Logik aus
+ * `server/src/sync/resolver.ts` (Zeile um 150), damit `accepted.has(...)`
+ * und `errorsById.has(...)` auf beiden Seiten denselben String matchen.
+ *
+ * Liefert `null`, wenn weder `id` noch `key`+`userId` vorhanden sind — der
+ * Aufrufer behandelt das als `MISSING_PAYLOAD_ID` (bzw. als
+ * korrupten Payload, je nach Kontext).
+ */
+export function payloadIdFor(entity: OutboxEintrag['entity'], payload: unknown): string | null {
+  if (entity === 'einstellung') {
+    if (!payload || typeof payload !== 'object') return null
+    const p = payload as { key?: unknown; userId?: unknown }
+    if (typeof p.key !== 'string' || p.key.length === 0) return null
+    const userPart = p.userId === null || p.userId === undefined ? 'global' : p.userId
+    if (typeof userPart !== 'string' || userPart.length === 0) return null
+    return `${p.key}#${userPart}`
+  }
+  if (payload && typeof payload === 'object' && 'id' in payload) {
+    const id = (payload as { id: unknown }).id
+    if (typeof id === 'string' && id.length > 0) return id
+  }
+  return null
+}
+
+/**
  * Parst `Retry-After`-Header (Sekunden ODER HTTP-Datum) und cappt auf
  * `capMs`. Liefert `null`, wenn nichts Verwertbares drinsteht.
  */
@@ -430,8 +462,8 @@ async function collectQuarantinedItems(limit: number): Promise<QuarantinedItem[]
   for (const o of quar.slice(0, limit)) {
     let payloadId = ''
     try {
-      const parsed = JSON.parse(o.payload) as { id?: unknown }
-      payloadId = typeof parsed.id === 'string' ? parsed.id : ''
+      const parsed = JSON.parse(o.payload) as unknown
+      payloadId = payloadIdFor(o.entity, parsed) ?? ''
     } catch {
       // korrupte payload
     }
@@ -493,8 +525,8 @@ async function collectStuckItems(limit = 5): Promise<SyncLastFailure['stuckItems
   for (const o of stuck.slice(0, limit)) {
     let payloadId = ''
     try {
-      const parsed = JSON.parse(o.payload) as { id?: unknown }
-      payloadId = typeof parsed.id === 'string' ? parsed.id : ''
+      const parsed = JSON.parse(o.payload) as unknown
+      payloadId = payloadIdFor(o.entity, parsed) ?? ''
     } catch {
       // korrupte payload — Diagnose zeigt leere ID
     }
@@ -635,11 +667,8 @@ export async function runSync(opts: { token: string | null; apiBase: string }): 
           await markFailed(o.id, `CORRUPT_PAYLOAD: ${e instanceof Error ? e.message : String(e)}`)
           continue
         }
-        const payloadId =
-          payload && typeof payload === 'object' && 'id' in payload
-            ? (payload as { id: unknown }).id
-            : undefined
-        if (typeof payloadId !== 'string' || payloadId.length === 0) {
+        const payloadId = payloadIdFor(o.entity, payload)
+        if (payloadId === null) {
           await markFailed(o.id, 'MISSING_PAYLOAD_ID')
           continue
         }
