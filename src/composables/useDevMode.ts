@@ -22,7 +22,10 @@ import { computed, ref, type ComputedRef } from 'vue'
 
 type DevModeGlobal = { __BMA_DEV_MODE__?: string }
 
-function resolveDevMode(): boolean {
+// Pure Auflösung ohne Vue-Reactivity. Wird sowohl intern in useDevMode
+// als auch im Dev-Mode-Bootstrap (services/dev-mode-bootstrap.ts)
+// benutzt, der VOR dem Vue-App-Mount laufen muss.
+export function resolveDevMode(): boolean {
   // 1) Container-Runtime-Config
   const fromWindow = (globalThis as DevModeGlobal).__BMA_DEV_MODE__
   if (typeof fromWindow === 'string') return fromWindow.toLowerCase() === 'true'

@@ -4,6 +4,11 @@ import { VitePWA } from 'vite-plugin-pwa'
 
 // https://vite.dev/config/
 export default defineConfig({
+  build: {
+    // Top-level await in main.ts (DEV_MODE-Bootstrap) braucht ES2022.
+    // Default ist 'modules' (= ES2020 ohne TLA), das bricht den Build.
+    target: 'es2022',
+  },
   plugins: [
     vue(),
     VitePWA({
