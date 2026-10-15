@@ -130,6 +130,17 @@ watchEffect(() => {
       apiBase: getApiBaseUrl(),
       getToken: () => (auth.session?.jwtExpiresAt ? localStorage.getItem('bma.auth.jwt') : null),
       intervalSek: 30,
+      onAuthRevoked: () => {
+        // Token ist abgelaufen / ungültig. Auth-Store leeren, der Router
+        // schickt uns dann automatisch auf die Login-View.
+        void auth.abmelden()
+        if (router.currentRoute.value.name !== 'login') {
+          void router.push({
+            name: 'login',
+            query: { redirect: router.currentRoute.value.fullPath },
+          })
+        }
+      },
     })
   } else {
     settings.stop()

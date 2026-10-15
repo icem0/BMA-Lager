@@ -586,6 +586,147 @@ describe('Sync — Diagnose (lastFailure)', () => {
   })
 })
 
+describe('Sync — 401 / Auth-Reset', () => {
+  it('401 resettet Outbox-Items (attempts=0, lastError=null) und ruft onAuthRevoked genau einmal', async () => {
+    setDb(new BmaLagerDb(`bma-lager-test-${Math.random().toString(36).slice(2)}`))
+    const a1 = artikelAnlage(neueUuid(), 'A1')
+    await outboxAdd('artikel', 'create', a1)
+    // Vorschaden: ein Item mit hohem attempts-Wert simulieren
+    const items = await getDb().outbox.toArray()
+    await getDb().outbox.update(items[0]!.id, {
+      attempts: 179,
+      lastError: 'Push HTTP 401',
+    })
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url.endsWith('/api/sync/push')) {
+        return new Response(
+          JSON.stringify({ code: 'UNAUTHORIZED', message: 'Token fehlt oder ungültig' }),
+          { status: 401, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      return new Response('not found', { status: 404 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const onAuthRevoked = vi.fn()
+    const { runSync, startSyncWorker, stopSyncWorker, _resetSyncForTests } =
+      await import('../worker')
+    _resetSyncForTests()
+    startSyncWorker({
+      apiBase: 'http://test.local',
+      getToken: () => 'tot',
+      onAuthRevoked,
+    })
+
+    await runSync({ token: 'tot', apiBase: 'http://test.local' })
+
+    // Outbox wurde zurückgesetzt
+    const after = await getDb().outbox.toArray()
+    expect(after[0]?.attempts).toBe(0)
+    expect(after[0]?.lastError).toBeNull()
+    expect(after[0]?.syncedAt).toBeNull()
+
+    // Callback wurde aufgerufen
+    expect(onAuthRevoked).toHaveBeenCalledTimes(1)
+
+    // Ein zweiter Push (z. B. vom Worker-Tick) darf den Callback NICHT
+    // erneut feuern — Latch hält.
+    await runSync({ token: 'tot', apiBase: 'http://test.local' })
+    expect(onAuthRevoked).toHaveBeenCalledTimes(1)
+
+    stopSyncWorker()
+  })
+
+  it('Erfolgreicher Push nach Auth-Reset löst das Latch (Callback kann erneut feuern)', async () => {
+    setDb(new BmaLagerDb(`bma-lager-test-${Math.random().toString(36).slice(2)}`))
+    const a1 = artikelAnlage(neueUuid(), 'A1')
+    await outboxAdd('artikel', 'create', a1)
+
+    let pushCalls = 0
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url.endsWith('/api/sync/push') && init?.method === 'POST') {
+        pushCalls++
+        if (pushCalls === 1) {
+          console.log(`[mock] push call #${pushCalls} → 401`)
+          return new Response(JSON.stringify({ code: 'UNAUTHORIZED', message: 'Token ungültig' }), {
+            status: 401,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        }
+        if (pushCalls === 2) {
+          console.log(`[mock] push call #${pushCalls} → 200, accepted=[${a1.id}]`)
+          return new Response(JSON.stringify({ accepted: [a1.id], conflicts: [], errors: [] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        }
+        console.log(`[mock] push call #${pushCalls} → 401 again`)
+        return new Response(
+          JSON.stringify({ code: 'UNAUTHORIZED', message: 'Token wieder ungültig' }),
+          { status: 401, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      if (url.includes('/api/sync/snapshot')) {
+        return new Response(
+          JSON.stringify({
+            serverTime: new Date().toISOString(),
+            since: '1970-01-01T00:00:00.000Z',
+            artikel: [],
+            standorte: [],
+            projekte: [],
+            buchungen: [],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      if (url.endsWith('/api/sync/status')) {
+        return new Response(
+          JSON.stringify({
+            serverTime: new Date().toISOString(),
+            counts: { artikel: 0, standorte: 0, projekte: 0, buchungen: 0 },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      return new Response('not found', { status: 404 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const onAuthRevoked = vi.fn()
+    const { runSync, startSyncWorker, stopSyncWorker, _resetSyncForTests } =
+      await import('../worker')
+    _resetSyncForTests()
+    startSyncWorker({
+      apiBase: 'http://test.local',
+      getToken: () => 'tot',
+      onAuthRevoked,
+    })
+
+    // 1) 401
+    await runSync({ token: 'tot', apiBase: 'http://test.local' })
+    expect(onAuthRevoked).toHaveBeenCalledTimes(1)
+
+    // 2) Erfolg (Token wurde vom User erneuert). Latch wird im success-Pfad
+    //    geloest. Outbox a1 ist jetzt synced.
+    await runSync({ token: 'frisch', apiBase: 'http://test.local' })
+    expect(onAuthRevoked).toHaveBeenCalledTimes(1)
+
+    // 3) Neues Outbox-Item hinzufuegen, damit der naechste runSync ueberhaupt
+    //    einen Push absetzt.
+    const a2 = artikelAnlage(neueUuid(), 'A2')
+    await outboxAdd('artikel', 'create', a2)
+    // Server-Fetch: jetzt 401 (User hat sich abgemeldet) → 3. Push → 401
+    // → onAuthRevoked MUSS wieder feuern.
+    await runSync({ token: 'tot', apiBase: 'http://test.local' })
+    expect(onAuthRevoked).toHaveBeenCalledTimes(2)
+
+    stopSyncWorker()
+  })
+})
+
 afterEach(() => {
   vi.unstubAllGlobals()
 })

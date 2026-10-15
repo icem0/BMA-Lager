@@ -206,6 +206,12 @@ let _intervalHandle: ReturnType<typeof setInterval> | null = null
 let _running = false
 /** Anzahl der aufeinanderfolgenden Fehlversuche (für Backoff). */
 let _consecutiveFailures = 0
+/** Callback, der bei 401 einmalig aufgerufen wird, damit die App den
+ *  Auth-Store zurücksetzen und zur Login-View navigieren kann. */
+let _onAuthRevoked: (() => void) | null = null
+/** Latch: verhindert mehrfaches Feuern von onAuthRevoked, bis ein
+ *  erfolgreicher Push die Auth-Validität wieder bestätigt. */
+let _authRevokedNotified = false
 
 export function getSyncStatus(): SyncStatus {
   return _status
@@ -323,6 +329,21 @@ async function markFailed(id: string, error: string): Promise<void> {
     attempts: e.attempts + 1,
     lastError: error,
   })
+}
+
+/**
+ * Setzt alle Outbox-Items zurück (attempts=0, lastError=null), die wegen
+ * eines abgelaufenen Tokens als failed markiert wurden. syncedAt bleibt
+ * unangetastet (sind eh noch nicht gepusht). Nach erfolgreichem Re-Login
+ * werden sie beim nächsten Sync-Lauf wieder gepusht.
+ */
+async function resetOutboxAfterAuthRevoked(): Promise<void> {
+  const all = await getDb().outbox.toArray()
+  for (const o of all) {
+    if (o.syncedAt === null && (o.attempts > 0 || o.lastError !== null)) {
+      await getDb().outbox.update(o.id, { attempts: 0, lastError: null })
+    }
+  }
 }
 
 /**
@@ -540,6 +561,9 @@ export async function runSync(opts: { token: string | null; apiBase: string }): 
       nextRetryAt: null,
     })
     _consecutiveFailures = 0
+    // Erfolgreicher Push beweist: Token ist wieder gültig (oder war es die
+    // ganze Zeit, z. B. nach manuellem Re-Login). Latch lösen.
+    _authRevokedNotified = false
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     let localCounts: TableCounts | null = _status.localCounts
@@ -595,14 +619,33 @@ export async function runSync(opts: { token: string | null; apiBase: string }): 
       })
     } else if (http?.category === 'auth') {
       // Token abgelaufen o. ä. — User muss sich neu einloggen.
+      // Outbox-Items NICHT weiter hochzählen, sonst rennt die Loop
+      // endlos mit attempts=200+. Wir setzen den nextRetryAt auf null
+      // (Worker pausiert, bis der User manuell re-synct), schicken
+      // einen Auth-Reset-Callback an die App, und resetten lastError/
+      // attempts/lastError der Outbox-Items (sie sind nicht wirklich
+      // kaputt — der Token ist es).
+      await resetOutboxAfterAuthRevoked()
       updateStatus({
         status: 'error',
-        lastError: msg,
+        lastError: 'Sitzung abgelaufen — bitte neu anmelden.',
         pending: await pendingCount(),
         localCounts,
-        nextRetryAt,
+        nextRetryAt: null,
         lastFailure: newFailure,
       })
+      // Callback NUR aufrufen, wenn er noch nicht im aktuellen
+      // Auth-Invalid-Zyklus gefeuert wurde. Verhindert Endlos-Trigger,
+      // falls die App den Worker nicht stoppt.
+      if (!_authRevokedNotified) {
+        _authRevokedNotified = true
+        // Schutz: bei erfolgreichem Push zurücksetzen.
+        try {
+          _onAuthRevoked?.()
+        } catch (e) {
+          console.error('onAuthRevoked callback failed:', e)
+        }
+      }
     } else {
       updateStatus({
         status: 'error',
@@ -672,11 +715,19 @@ export interface WorkerOptions {
   getToken: () => string | null
   /** Sync-Intervall in Sekunden. */
   intervalSek?: number
+  /**
+   * Wird aufgerufen, wenn der Server einen 401 liefert — Token ist abgelaufen
+   * oder ungültig. Hier sollte der Auth-Store zurückgesetzt und ggf. zur
+   * Login-View navigiert werden. Wird maximal einmal pro Auth-Invalid-Zyklus
+   * gefeuert, damit sich der Sync-Worker nicht selbst verstrickt.
+   */
+  onAuthRevoked?: () => void
 }
 
 export function startSyncWorker(opts: WorkerOptions): void {
   if (_intervalHandle) return
   setApiBaseUrl(opts.apiBase)
+  _onAuthRevoked = opts.onAuthRevoked ?? null
   const intervalMs = (opts.intervalSek ?? 30) * 1000
 
   const tick = () => {
@@ -753,6 +804,8 @@ export function _resetSyncForTests(): void {
     lastFailure: null,
   }
   _consecutiveFailures = 0
+  _authRevokedNotified = false
+  _onAuthRevoked = null
   if (_intervalHandle) {
     clearInterval(_intervalHandle)
     _intervalHandle = null
