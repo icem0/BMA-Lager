@@ -5,6 +5,8 @@ import { RouterLink } from 'vue-router'
 import { useBuchungStore } from '../stores/buchung'
 import { useArtikelStore } from '../stores/artikel'
 import { useStandortStore } from '../stores/standort'
+import { useTableSort } from '../composables/useTableSort'
+import SortableTh from '../components/SortableTh.vue'
 import type { Buchung } from '../db/types'
 
 const { t } = useI18n()
@@ -24,17 +26,39 @@ function statusLabel(b: Buchung): string {
   return t('view.buchung.status.aktiv')
 }
 
-const zeilen = computed<Buchung[]>(() => {
-  const gefiltert = buchungStore.buchungen.filter((b) => {
-    if (artikelFilter.value && b.artikelId !== artikelFilter.value) return false
-    return true
-  })
-  return gefiltert
-    .slice()
-    .sort((a, b) => new Date(b.erstelltAm).getTime() - new Date(a.erstelltAm).getTime())
+type SortKey = 'erstelltAm' | 'artikel' | 'standort' | 'typ' | 'menge' | 'projekt' | 'von'
+
+const sortierung = useTableSort<Buchung, SortKey>({
+  defaultKey: 'erstelltAm',
+  defaultDir: 'desc',
+  getValue: (b, k) => {
+    switch (k) {
+      case 'erstelltAm':
+        return b.erstelltAm
+      case 'artikel':
+        return nameArtikel(b.artikelId)
+      case 'standort':
+        return nameStandort(b.standortId)
+      case 'typ':
+        return b.typ
+      case 'menge':
+        return b.menge
+      case 'projekt':
+        return b.projekt ?? ''
+      case 'von':
+        return b.erstelltVon
+    }
+  },
 })
 
-const stornoId = ref<string | null>(null)
+const gefiltert = computed<Buchung[]>(() =>
+  buchungStore.buchungen.filter((b) => {
+    if (artikelFilter.value && b.artikelId !== artikelFilter.value) return false
+    return true
+  }),
+)
+
+const zeilen = computed<Buchung[]>(() => sortierung.sortiere(gefiltert.value))
 
 function nameArtikel(id: string): string {
   return artikelStore.byId(id)?.titel ?? '—'
@@ -65,18 +89,12 @@ function formatDatumKurz(iso: string): string {
 
 async function stornieren(b: Buchung): Promise<void> {
   if (istStorniert(b)) return
-  if (stornoId.value !== null) return
   if (!confirm('Stornieren?')) return
-  stornoId.value = b.id
-  try {
-    await buchungStore.mu.stornieren({
-      buchungId: b.id,
-      grund: 'Storno aus Buchungsliste',
-      erstelltVon: '',
-    })
-  } finally {
-    stornoId.value = null
-  }
+  await buchungStore.mu.stornieren({
+    buchungId: b.id,
+    grund: 'Storno aus Buchungsliste',
+    erstelltVon: '',
+  })
 }
 </script>
 
@@ -99,13 +117,56 @@ async function stornieren(b: Buchung): Promise<void> {
     <table v-else class="data">
       <thead>
         <tr>
-          <th>{{ t('view.buchung.spalten.zeit') }}</th>
-          <th>{{ t('view.buchung.spalten.artikel') }}</th>
-          <th>{{ t('view.buchung.spalten.standort') }}</th>
-          <th>{{ t('view.buchung.spalten.typ') }}</th>
-          <th class="num">{{ t('view.buchung.spalten.menge') }}</th>
-          <th>{{ t('view.buchung.spalten.projekt') }}</th>
-          <th>{{ t('view.buchung.spalten.von') }}</th>
+          <SortableTh
+            :label="t('view.buchung.spalten.zeit')"
+            sort-key="erstelltAm"
+            :active-key="sortierung.sortKey.value"
+            :dir="sortierung.sortDir.value"
+            @sort="sortierung.onSort"
+          />
+          <SortableTh
+            :label="t('view.buchung.spalten.artikel')"
+            sort-key="artikel"
+            :active-key="sortierung.sortKey.value"
+            :dir="sortierung.sortDir.value"
+            @sort="sortierung.onSort"
+          />
+          <SortableTh
+            :label="t('view.buchung.spalten.standort')"
+            sort-key="standort"
+            :active-key="sortierung.sortKey.value"
+            :dir="sortierung.sortDir.value"
+            @sort="sortierung.onSort"
+          />
+          <SortableTh
+            :label="t('view.buchung.spalten.typ')"
+            sort-key="typ"
+            :active-key="sortierung.sortKey.value"
+            :dir="sortierung.sortDir.value"
+            @sort="sortierung.onSort"
+          />
+          <SortableTh
+            :label="t('view.buchung.spalten.menge')"
+            sort-key="menge"
+            align="right"
+            :active-key="sortierung.sortKey.value"
+            :dir="sortierung.sortDir.value"
+            @sort="sortierung.onSort"
+          />
+          <SortableTh
+            :label="t('view.buchung.spalten.projekt')"
+            sort-key="projekt"
+            :active-key="sortierung.sortKey.value"
+            :dir="sortierung.sortDir.value"
+            @sort="sortierung.onSort"
+          />
+          <SortableTh
+            :label="t('view.buchung.spalten.von')"
+            sort-key="von"
+            :active-key="sortierung.sortKey.value"
+            :dir="sortierung.sortDir.value"
+            @sort="sortierung.onSort"
+          />
           <th>{{ t('view.buchung.spalten.status') }}</th>
           <th></th>
         </tr>
@@ -133,10 +194,9 @@ async function stornieren(b: Buchung): Promise<void> {
               v-if="!istStorniert(b) && b.typ !== 'kommission'"
               type="button"
               class="danger"
-              :disabled="stornoId === b.id"
               @click="stornieren(b)"
             >
-              {{ stornoId === b.id ? 'Storniere…' : 'Storno' }}
+              Storno
             </button>
             <RouterLink v-if="b.typ === 'kommission'" :to="`/kommission/${b.id}`" class="btn">
               …
@@ -173,10 +233,9 @@ async function stornieren(b: Buchung): Promise<void> {
             v-if="!istStorniert(b) && b.typ !== 'kommission'"
             type="button"
             class="danger"
-            :disabled="stornoId === b.id"
             @click="stornieren(b)"
           >
-            {{ stornoId === b.id ? 'Storniere…' : 'Storno' }}
+            Storno
           </button>
           <RouterLink v-if="b.typ === 'kommission'" :to="`/kommission/${b.id}`" class="btn">
             Kommission

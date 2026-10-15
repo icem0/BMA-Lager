@@ -6,7 +6,9 @@ import { useArtikelStore } from '../stores/artikel'
 import { useStandortStore } from '../stores/standort'
 import { useBuchungStore } from '../stores/buchung'
 import { useArtikelTypen } from '../composables/useArtikelTypen'
-import type { ArtikelStatus } from '../db/types'
+import { useTableSort } from '../composables/useTableSort'
+import SortableTh from '../components/SortableTh.vue'
+import type { Artikel, ArtikelStatus } from '../db/types'
 
 const { t } = useI18n()
 const artikelStore = useArtikelStore()
@@ -26,13 +28,27 @@ function applyFilter(): void {
   })
 }
 
-const zeilen = computed(() => artikelStore.gefiltert)
+type SortKey = 'titel' | 'typ' | 'bestand'
+
+const standardStandort = computed(() => standortStore.standardlager)
+
+const sortierung = useTableSort<Artikel, SortKey>({
+  defaultKey: 'titel',
+  defaultDir: 'asc',
+  getValue: (a, k) => {
+    if (k === 'bestand') {
+      const sl = standardStandort.value
+      return sl ? buchungStore.getBestand(a.id, sl.id) : 0
+    }
+    return a[k]
+  },
+})
+
+const zeilen = computed(() => sortierung.sortiere(artikelStore.gefiltert))
 
 function bestandStandard(artikelId: string, standortId: string): number {
   return buchungStore.getBestand(artikelId, standortId)
 }
-
-const standardStandort = computed(() => standortStore.standardlager)
 
 const statusOptionen: { value: 'alle' | ArtikelStatus; labelKey: string }[] = [
   { value: 'verfuegbar', labelKey: 'view.artikel.status.verfuegbar' },
@@ -74,11 +90,29 @@ const statusOptionen: { value: 'alle' | ArtikelStatus; labelKey: string }[] = [
     <table v-else class="data desktop-only">
       <thead>
         <tr>
-          <th>{{ t('view.artikel.spalten.titel') }}</th>
-          <th>{{ t('view.artikel.spalten.typ') }}</th>
-          <th v-if="standardStandort" class="num">
-            {{ t('view.artikel.spalten.bestand') }} ({{ standardStandort.name }})
-          </th>
+          <SortableTh
+            :label="t('view.artikel.spalten.titel')"
+            sort-key="titel"
+            :active-key="sortierung.sortKey.value"
+            :dir="sortierung.sortDir.value"
+            @sort="sortierung.onSort"
+          />
+          <SortableTh
+            :label="t('view.artikel.spalten.typ')"
+            sort-key="typ"
+            :active-key="sortierung.sortKey.value"
+            :dir="sortierung.sortDir.value"
+            @sort="sortierung.onSort"
+          />
+          <SortableTh
+            v-if="standardStandort"
+            :label="`${t('view.artikel.spalten.bestand')} (${standardStandort.name})`"
+            sort-key="bestand"
+            align="right"
+            :active-key="sortierung.sortKey.value"
+            :dir="sortierung.sortDir.value"
+            @sort="sortierung.onSort"
+          />
           <th></th>
         </tr>
       </thead>
