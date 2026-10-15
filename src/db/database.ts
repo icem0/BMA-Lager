@@ -23,7 +23,7 @@ export class BmaLagerDb extends Dexie {
   standorte!: Table<Standort, string>
   buchungen!: Table<Buchung, string>
   projekte!: Table<Projekt, string>
-  einstellungen!: Table<Einstellung, [string, string | null]>
+  einstellungen!: Table<Einstellung, [string, string]>
   auditLog!: Table<AuditLogEintrag, string>
   /** Sync-Que: jede Schreiboperation landet hier, bis sie zum Server gepusht ist. */
   outbox!: Table<OutboxEintrag, string>
@@ -97,6 +97,11 @@ export class BmaLagerDb extends Dexie {
     //      - Primary Key wird zum Compound [key+userId]
     //      - userId (null = global) und geaendertAm kommen dazu
     //      - Alte Zeilen (v1–v4) bekommen userId=null und geaendertAm=now
+    //      - Hinweis: Dexie erlaubt kein echtes `null` in Primary-Key-
+    //        Komponenten. Wir nutzen die Konvention `userId = ''` (leerer
+    //        String) für "global" im Index, behalten aber `null` im
+    //        TypeScript-Type. Die Domain-Schicht normalisiert beim Lesen/
+    //        Schreiben (siehe src/stores/settings.ts).
     this.version(5)
       .stores({
         artikel: 'id, sharePointId, typ, status, titel',
@@ -109,14 +114,15 @@ export class BmaLagerDb extends Dexie {
         outbox: 'id, entity, syncedAt, createdAt',
       })
       .upgrade(async (tx) => {
-        // sync.lastPullAt/sync.lastPushAt bleiben in v5 unter userId=null
-        // (sie sind globale Sync-Marker, nicht pro User).
+        // Bestehende v4-Zeilen bekommen userId='' (Index-konformer globaler
+        // Marker) und geaendertAm=now. Die TypeScript-Domain behandelt ''
+        // wie null.
         const now = new Date().toISOString()
         await tx
           .table('einstellungen')
           .toCollection()
           .modify((row: Record<string, unknown>) => {
-            if (row['userId'] === undefined) row['userId'] = null
+            if (row['userId'] === undefined || row['userId'] === null) row['userId'] = ''
             if (typeof row['geaendertAm'] !== 'string') row['geaendertAm'] = now
           })
       })

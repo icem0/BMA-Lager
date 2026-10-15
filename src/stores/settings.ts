@@ -6,6 +6,10 @@
 //   - sprache, standardStandortId → userId = <current user>
 // Beim Setzen wird ein Outbox-Eintrag erzeugt, den der Sync-Worker zum
 // Server pusht. Der Server ist Source of Truth (LWW auf geaendertAm).
+//
+// IndexedDB-Konvention: Dexie erlaubt kein `null` in Primary-Key-Komponenten.
+// Wir speichern "global" als userId = '' (leerer String) und übersetzen
+// in der Domain-Schicht zu/von null. Der TypeScript-Type bleibt null.
 
 import { defineStore } from 'pinia'
 import { liveQuery, type Subscription } from 'dexie'
@@ -42,20 +46,21 @@ const DEFAULTS: Settings = {
 
 const GLOBAL_KEYS = new Set<string>(['artikelTypen'])
 const PER_USER_KEYS = new Set<string>(['sprache', 'standardStandortId'])
+const GLOBAL_INDEX = ''
 
 function scopeForKey(key: string): 'global' | 'user' {
   return GLOBAL_KEYS.has(key) ? 'global' : 'user'
 }
 
 function fromRows(rows: Einstellung[], currentUserId: string | null): Settings {
-  // Selektiert: global-Zeilen (userId=null) ODER Zeilen des aktuellen Users.
-  // Bei per-User-Lookup Fallback auf global, falls kein User-Override da.
+  // Domain-normalisierte Sicht: userId = '' wird wie null behandelt.
+  const norm = (uid: string | null): string | null => (uid === '' ? null : uid)
   const byKey = new Map<string, Einstellung>()
   for (const r of rows) {
-    const isGlobal = r.userId === null
+    const isGlobal = norm(r.userId) === null
     if (isGlobal) {
       byKey.set(r.key, r)
-    } else if (currentUserId !== null && r.userId === currentUserId) {
+    } else if (currentUserId !== null && norm(r.userId) === currentUserId) {
       byKey.set(r.key, r)
     }
   }
@@ -135,12 +140,18 @@ export const useSettingsStore = defineStore('settings', () => {
       return
     }
     const geaendertAm = jetztIso()
-    const row: Einstellung = { key, userId, value, geaendertAm }
-    await getDb().einstellungen.put(row)
-    // Outbox-Hook für Server-Sync. Payload enthält key/userId/value/zeit —
-    // identisch zum späteren Server-Schema, damit der Resolver den
-    // Datensatz 1:1 übernehmen kann.
-    await queueOp('einstellung', 'upsert', row)
+    // Domain-Sicht: userId = null für global. IndexedDB-Sicht: '' als
+    // Primary-Key-Marker. Wir schreiben den normalisierten Datensatz in
+    // die Outbox (an den Server geht null).
+    const outboxRow: Einstellung = { key, userId, value, geaendertAm }
+    const indexedRow: Einstellung = {
+      key,
+      userId: userId === null ? GLOBAL_INDEX : userId,
+      value,
+      geaendertAm,
+    }
+    await getDb().einstellungen.put(indexedRow)
+    await queueOp('einstellung', 'upsert', outboxRow)
   }
 
   async function setSprache(sprache: Sprache): Promise<void> {

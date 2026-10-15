@@ -433,13 +433,15 @@ async function applySnapshot(snap: SyncSnapshot): Promise<void> {
         const existing = await db.buchungen.get(b.id)
         if (!existing) await db.buchungen.add(b)
       }
-      // Einstellungen — LWW auf geaendertAm, Identität = (key, userId)
+      // Einstellungen — LWW auf geaendertAm, Identität = (key, userId).
+      // IndexedDB-Konvention: null in userId wird als '' indexiert.
       for (const e of snap.einstellungen) {
-        const existing = await db.einstellungen.get([e.key, e.userId])
+        const indexedUserId = e.userId === null ? '' : e.userId
+        const existing = await db.einstellungen.get([e.key, indexedUserId])
         if (!existing) {
-          await db.einstellungen.add(e)
+          await db.einstellungen.add({ ...e, userId: indexedUserId })
         } else if (e.geaendertAm > existing.geaendertAm) {
-          await db.einstellungen.put(e)
+          await db.einstellungen.put({ ...e, userId: indexedUserId })
         }
       }
     },
@@ -451,13 +453,13 @@ async function applySnapshot(snap: SyncSnapshot): Promise<void> {
   const now = jetztIso()
   await getDb().einstellungen.put({
     key: 'sync.lastPullAt',
-    userId: null,
+    userId: '',
     value: snap.serverTime,
     geaendertAm: now,
   })
   await getDb().einstellungen.put({
     key: 'sync.lastPushAt',
-    userId: null,
+    userId: '',
     value: snap.serverTime,
     geaendertAm: now,
   })
@@ -471,7 +473,7 @@ export async function runSync(opts: { token: string | null; apiBase: string }): 
 
   const { token, apiBase } = opts
   const lastPull =
-    (await getDb().einstellungen.get(['sync.lastPullAt', null]))?.value ?? null
+    (await getDb().einstellungen.get(['sync.lastPullAt', '']))?.value ?? null
 
   try {
     updateStatus({ status: 'syncing' })
