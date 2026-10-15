@@ -145,6 +145,18 @@ jobs:
         run: npm run test:run
 
       - name: Build
+        # UTF-8-Locale setzen, BEVOR 'npm run build' Strings schreibt.
+        # Ohne das transcodiert vite/rollup die mehrbyte-Zeichen
+        # (U+23FB, U+2026, Emojis, Umlaute) in der C/POSIX-Default-
+        # Locale des ubuntu-latest-Runners, und das Ergebnis im
+        # GHCR-Image zeigt im Browser ÔÅ╗-Mojibake. Dockerfile.pwa
+        # braucht dasselbe ENV, weil 'npm run build' dort
+        # nochmal laeuft (sonst wuerde der Image-eigene Build,
+        # z. B. bei manuellem 'docker build', wieder kaputt sein).
+        env:
+          LANG: C.UTF-8
+          LC_ALL: C.UTF-8
+          TZ: Europe/Berlin
         run: npm run build
 
       - name: Build image
