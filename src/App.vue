@@ -387,6 +387,20 @@ function hasStuckItems(
   return !!failure && failure.stuckItems.length > 0
 }
 
+/**
+ * Formatiert ein Diagnose-Payload für die `<pre>`-Anzeige. Große Objekte
+ * kürzen wir, damit der Diagnose-Block nicht ausufert.
+ */
+function formatPayload(p: unknown): string {
+  try {
+    const s = JSON.stringify(p, null, 2)
+    if (s.length > 4000) return s.slice(0, 4000) + '\n… (gekürzt)'
+    return s
+  } catch {
+    return String(p)
+  }
+}
+
 function formatRelativ(iso: string | null): string {
   if (!iso) return 'nie'
   const ms = Date.now() - new Date(iso).getTime()
@@ -697,6 +711,19 @@ function formatRelativ(iso: string | null): string {
               <code class="mono">{{ e.code }}</code>
               <span>{{ e.message }}</span>
               <span class="muted"> {{ e.id.slice(0, 8) }}… </span>
+              <template v-if="e.code === 'INTERNAL'">
+                <details v-if="e.stack" class="sync-diag-sub">
+                  <summary>Stack</summary>
+                  <pre class="mono sync-diag-pre">{{ e.stack }}</pre>
+                </details>
+                <details v-if="e.payload !== undefined" class="sync-diag-sub">
+                  <summary>Payload (eingegangen)</summary>
+                  <pre class="mono sync-diag-pre">{{ formatPayload(e.payload) }}</pre>
+                </details>
+              </template>
+              <template v-else-if="typeof e.currentBestand === 'number'">
+                <span class="wert-warn"> aktueller Bestand: {{ e.currentBestand }} </span>
+              </template>
             </li>
           </ul>
         </details>
@@ -1311,6 +1338,27 @@ function formatRelativ(iso: string | null): string {
 .sync-diag-list .wert-warn {
   color: var(--text-strong);
   font-family: var(--mono);
+}
+.sync-diag-sub {
+  margin: 0.25rem 0 0 0.5rem;
+  font-size: 0.78rem;
+}
+.sync-diag-sub summary {
+  cursor: pointer;
+  color: var(--text-muted);
+}
+.sync-diag-pre {
+  margin: 0.25rem 0 0 0;
+  padding: 0.4rem 0.6rem;
+  background: rgba(0, 0, 0, 0.35);
+  color: var(--text);
+  font-size: 0.75rem;
+  line-height: 1.35;
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 18rem;
 }
 
 .sync-panel .hint {

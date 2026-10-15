@@ -171,6 +171,10 @@ export interface PushResult {
     code: string
     message: string
     currentBestand?: number
+    /** Nur bei code === 'INTERNAL' — Server-Stack + eingegangenes Payload,
+     *  damit die PWA-Diagnose den Bug sichtbar macht. */
+    stack?: string
+    payload?: unknown
   }>
 }
 
@@ -205,8 +209,19 @@ export interface SyncLastFailure {
   retryAfterMs: number | null
   /** Anzahl Outbox-Items, die im letzten Push abgelehnt wurden (errors+conflicts). */
   rejectedItems: number
-  /** Erste paar Beispiele aus `result.errors` für Diagnose. */
-  sampleErrors: Array<{ id: string; code: string; message: string }>
+  /** Erste paar Beispiele aus `result.errors` für Diagnose. `stack` und
+   *  `payload` werden nur vom Server geliefert, wenn der Fehler
+   *  unerwartet war (code === 'INTERNAL'). Die UI zeigt beides an —
+   *  ohne diese Felder war der Bug "value.toISOString is not a function"
+   *  nicht greifbar, weil nur die nackte Message sichtbar war. */
+  sampleErrors: Array<{
+    id: string
+    code: string
+    message: string
+    stack?: string
+    payload?: unknown
+    currentBestand?: number
+  }>
   /** Erste paar Outbox-Items mit lastError (sichtbar in der UI). */
   stuckItems: Array<{
     outboxId: string
@@ -684,10 +699,19 @@ export async function runSync(opts: { token: string | null; apiBase: string }): 
             result.errors.map((e) => [e.id, { code: e.code, msg: `${e.code}: ${e.message}` }]),
           )
           // Diagnose: sammle die ersten paar Server-Fehler, damit die UI
-          // zeigen kann, WARUM der Server das Item abgelehnt hat.
+          // zeigen kann, WARUM der Server das Item abgelehnt hat. Bei
+          // INTERNAL-Fehlern reichen wir `stack` und `payload` 1:1
+          // durch — das ist der einzige Weg, einen serverseitigen Bug
+          // aus der PWA-Diagnose heraus zu debuggen.
           const sampleErrors: SyncLastFailure['sampleErrors'] = result.errors
             .slice(0, 3)
-            .map((e) => ({ id: e.id, code: e.code, message: e.message }))
+            .map((e) => ({
+              id: e.id,
+              code: e.code,
+              message: e.message,
+              ...(e.code === 'INTERNAL' ? { stack: e.stack, payload: e.payload } : {}),
+              ...(typeof e.currentBestand === 'number' ? { currentBestand: e.currentBestand } : {}),
+            }))
           const lastPushDiagnosis: Pick<SyncLastFailure, 'rejectedItems' | 'sampleErrors'> = {
             rejectedItems: result.conflicts.length + result.errors.length,
             sampleErrors,

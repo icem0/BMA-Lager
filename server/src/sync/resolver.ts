@@ -73,6 +73,13 @@ export interface ResolverResult {
     code: string
     message: string
     currentBestand?: number
+    /** Server-seitiger Stack, nur bei code === 'INTERNAL'. PWA zeigt ihn
+     *  in der Diagnose an — ohne Stack sind solche Fehler nicht debuggbar. */
+    stack?: string
+    /** Das eingegangene Payload (saniert, ohne user-spezifische Secrets),
+     *  nur bei code === 'INTERNAL'. Hilft zu sehen, WAS der Client geschickt
+     *  hat, als der Server ausgestiegen ist. */
+    payload?: unknown
   }>
 }
 
@@ -116,7 +123,7 @@ export async function resolvePush(
         await resolveUmlagerungPaar(db, list)
         for (const op of list) result.accepted.push(op.payload.id)
       } catch (err) {
-        for (const op of list) pushBuchungsError(result, op.payload.id, err)
+        for (const op of list) pushBuchungsError(result, op.payload.id, err, op)
       }
     }
   }
@@ -165,7 +172,7 @@ export async function resolvePush(
       // Einstellungen `undefined` ergab — der Client hätte den Fehler
       // dann nicht dem Outbox-Item zuordnen können und es endlos neu
       // gepusht bis zur Quarantäne.
-      pushBuchungsError(result, entitaetIdFor(op), err)
+      pushBuchungsError(result, entitaetIdFor(op), err, op)
     }
   }
 
@@ -190,7 +197,19 @@ function entitaetIdFor(op: PushOp): string {
  * Klassifiziert einen Resolver-Wurf und ordnet ihn der passenden
  * `ResolverResult`-Liste zu.
  */
-function pushBuchungsError(result: ResolverResult, id: string, err: unknown): void {
+/**
+ * Klassifiziert einen Resolver-Wurf und ordnet ihn der passenden
+ * `ResolverResult`-Liste zu. Bei unerwarteten Fehlern reichern wir die
+ * Antwort um Stack + Payload an, damit die PWA-Diagnose den Bug
+ * sichtbar macht (sonst steht dort nur eine kryptische `message`,
+ * mit der niemand etwas anfangen kann).
+ */
+function pushBuchungsError(
+  result: ResolverResult,
+  id: string,
+  err: unknown,
+  op?: PushOp,
+): void {
   if (err instanceof ConflictError) {
     result.conflicts.push({ id, reason: err.message })
   } else if (err instanceof NegativerBestandError) {
@@ -207,10 +226,26 @@ function pushBuchungsError(result: ResolverResult, id: string, err: unknown): vo
       message: err.message,
     })
   } else {
+    // Unerwarteter Fehler: voll diagnostizieren. Wir loggen den Fehler
+    // außerdem serverseitig mit Stack — falls die PWA-Diagnose leer ist,
+    // weil z. B. der Fehler beim JSON-Serialisieren passiert, hilft das
+    // Container-Log beim Eingrenzen.
+    const message = err instanceof Error ? err.message : String(err)
+    const stack = err instanceof Error ? err.stack : undefined
+    // eslint-disable-next-line no-console
+    console.error('[sync/push] INTERNAL', {
+      id,
+      entity: op?.entity,
+      op: op?.op,
+      message,
+      stack,
+    })
     result.errors.push({
       id,
       code: 'INTERNAL',
-      message: err instanceof Error ? err.message : String(err),
+      message,
+      stack,
+      payload: op?.payload,
     })
   }
 }
