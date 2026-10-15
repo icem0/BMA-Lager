@@ -3,6 +3,15 @@
 
 # ---------- Build ----------
 FROM node:22-bookworm-slim AS build
+# UTF-8-Locale: ohne die schreiben node/vite/rollup-Strings in der
+# Container-Default-Locale (C/POSIX), was bei mehrbyte-Zeichen wie U+23FB (⏻),
+# U+2026 (…), Emojis, Umlauten die Bytes beim Schreiben in /app/dist
+# zerstört. Symptom im Browser: 'ÔÅ╗'-artige Mojibake-Kaestchen statt der
+# eigentlichen Glyphen — obwohl die Source-Datei in der IDE korrekt
+# aussieht. Locale explizit setzen, BEVOR irgendwas geschrieben wird.
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    TZ=Europe/Berlin
 WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm ci --no-audit --no-fund
