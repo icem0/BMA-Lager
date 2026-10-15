@@ -81,7 +81,8 @@ function fromRows(rows: Einstellung[], currentUserId: string | null): Settings {
 
   const spracheRow = byKey.get('sprache')
   const spracheRaw = spracheRow?.value as Sprache | undefined
-  const sprache: Sprache = spracheRaw === 'en' || spracheRaw === 'de' ? spracheRaw : DEFAULTS.sprache
+  const sprache: Sprache =
+    spracheRaw === 'en' || spracheRaw === 'de' ? spracheRaw : DEFAULTS.sprache
 
   const standortRow = byKey.get('standardStandortId')
   const standardStandortId = standortRow?.value ? standortRow.value : DEFAULTS.standardStandortId

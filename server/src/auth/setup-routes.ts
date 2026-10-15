@@ -20,23 +20,10 @@
 import type { FastifyInstance } from 'fastify'
 import argon2 from 'argon2'
 import { eq } from 'drizzle-orm'
-import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js'
 import { getDb } from '../db/client.js'
-import { artikel, einstellungen, standorte, users } from '../db/schema.js'
-import type * as schema from '../db/schema.js'
-import {
-  bootstrapInhalt,
-  setupSchema,
-  type BootstrapInhalt,
-} from '../domain/validierung.js'
-
-const HAUPTLAGER_TYP = 'lager' as const
-
-export interface BootstrapResult {
-  uebersprungen: boolean
-  hauptlagerId?: string
-  testArtikelIds: string[]
-}
+import { einstellungen, users } from '../db/schema.js'
+import { bootstrapHauptlager } from './bootstrap.js'
+import { bootstrapInhalt, setupSchema } from '../domain/validierung.js'
 
 export async function setupRoutes(app: FastifyInstance): Promise<void> {
   // ---------- GET /api/auth/setup-status ----------
@@ -125,78 +112,3 @@ export async function setupRoutes(app: FastifyInstance): Promise<void> {
     })
   })
 }
-
-/**
- * Legt das Hauptlager (Standard-Standort) und 5 Test-Artikel an — sofern
- * noch kein Standard-Standort existiert. Idempotent: zweiter Aufruf in
- * derselben Transaktion oder nach einem Retry tut nichts.
- *
- * Extracted as a pure DB-bound function so that unit tests can drive it
- * with a thin in-memory shim.
- */
-export async function bootstrapHauptlager(
-  tx: PostgresJsDatabase<typeof schema>,
-  inhalt: BootstrapInhalt,
-): Promise<BootstrapResult> {
-  const bestehende = await tx
-    .select({ id: standorte.id })
-    .from(standorte)
-    .where(eq(standorte.standard, true))
-    .limit(1)
-  if (bestehende.length > 0) {
-    return { uebersprungen: true, testArtikelIds: [] }
-  }
-
-  const hauptlager = buildHauptlager(inhalt)
-  await tx.insert(standorte).values(hauptlager)
-
-  const testArtikel = buildTestArtikel(inhalt)
-  if (testArtikel.length > 0) {
-    await tx.insert(artikel).values(testArtikel)
-  }
-
-  return {
-    uebersprungen: false,
-    hauptlagerId: hauptlager.id,
-    testArtikelIds: testArtikel.map((a) => a.id),
-  }
-}
-
-function buildHauptlager(inhalt: BootstrapInhalt) {
-  const now = new Date()
-  return {
-    id: crypto.randomUUID(),
-    name: inhalt.hauptlagerName,
-    typ: HAUPTLAGER_TYP,
-    projekt: null,
-    kennzeichen: null,
-    standard: true,
-    archiviert: false,
-    geaendertAm: now,
-    erstelltAm: now,
-  }
-}
-
-function buildTestArtikel(inhalt: BootstrapInhalt) {
-  const now = new Date()
-  return inhalt.testArtikel.map((a) => ({
-    id: crypto.randomUUID(),
-    sharePointId: null,
-    titel: a.titel,
-    status: 'verfuegbar' as const,
-    typ: a.typ,
-    lieferant: null,
-    verpackungseinheit: a.verpackungseinheit,
-    mindestbestand: a.mindestbestand,
-    nachbestellHinweis: null,
-    bestellnummer: null,
-    listenpreis: null,
-    geaendertAm: now,
-    erstelltAm: now,
-    archiviert: false,
-  }))
-}
-
-// Test-Hooks (nicht Teil der oeffentlichen API): exportiert fuer Unit-Tests.
-export const __test__ = { buildHauptlager, buildTestArtikel, HAUPTLAGER_TYP }
-

@@ -13,8 +13,7 @@ export interface ClearCacheResult {
  * wenn ein Reload ausgelöst wurde.
  */
 export async function clearAppCacheAndReload(): Promise<ClearCacheResult> {
-  const cacheNames =
-    typeof caches !== 'undefined' ? await caches.keys() : []
+  const cacheNames = typeof caches !== 'undefined' ? await caches.keys() : []
   await Promise.all(cacheNames.map((name) => caches.delete(name)))
 
   let reloaded = false

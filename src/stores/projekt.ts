@@ -23,10 +23,7 @@ export const useProjektStore = defineStore('projekt', () => {
     subscription = liveQuery(() =>
       // Indexierter Zugriff auf `archiviert` (Dexie v1+).
       // IndexedDB speichert booleans als 0/1 — `equals(0)` = `false`.
-      getDb()
-        .projekte.where('archiviert')
-        .equals(0)
-        .toArray(),
+      getDb().projekte.where('archiviert').equals(0).toArray(),
     ).subscribe({
       next: (rows) => {
         projekte.value = rows

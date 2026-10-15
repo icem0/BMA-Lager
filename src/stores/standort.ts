@@ -75,10 +75,7 @@ export const useStandortStore = defineStore('standort', () => {
       if (s.standard) {
         // Indexierter Zugriff auf `standard` (Dexie v5+).
         // IndexedDB speichert booleans als 0/1 — `equals(1)` = `true`.
-        await getDb()
-          .standorte.where('standard')
-          .equals(1)
-          .modify({ standard: false })
+        await getDb().standorte.where('standard').equals(1).modify({ standard: false })
       }
       await getDb().standorte.add(s)
     })

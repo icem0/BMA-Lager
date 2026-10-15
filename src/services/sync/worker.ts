@@ -366,9 +366,7 @@ async function nextBatch(): Promise<OutboxEintrag[]> {
   // bereits synced sind (Bug 2025-12). Stattdessen alle pending lesen
   // und die ersten BATCH_SIZE nehmen.
   const all = await getDb().outbox.orderBy('createdAt').toArray()
-  return all
-    .filter((o) => o.syncedAt == null && o.quarantinedAt == null)
-    .slice(0, BATCH_SIZE)
+  return all.filter((o) => o.syncedAt == null && o.quarantinedAt == null).slice(0, BATCH_SIZE)
 }
 
 async function markSynced(id: string): Promise<void> {
@@ -615,8 +613,7 @@ export async function runSync(opts: { token: string | null; apiBase: string }): 
   _running = true
 
   const { token, apiBase } = opts
-  const lastPull =
-    (await getDb().einstellungen.get(['sync.lastPullAt', '']))?.value ?? null
+  const lastPull = (await getDb().einstellungen.get(['sync.lastPullAt', '']))?.value ?? null
 
   try {
     updateStatus({ status: 'syncing' })

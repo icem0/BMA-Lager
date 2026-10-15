@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { bootstrapInhalt } from '../domain/validierung.js'
-import { __test__ } from '../auth/setup-routes.js'
+import { __test__ } from '../auth/bootstrap.js'
 
 describe('bootstrapInhalt', () => {
   it('liefert deutschen Hauptlager-Namen + 5 deutsche Test-Artikel (de-DE)', () => {

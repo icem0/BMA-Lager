@@ -49,7 +49,7 @@ const branchFromEnv = (process.env.GIT_BRANCH ?? '').replace(/[^a-zA-Z0-9._/-]/g
 const commitFromGit = gitOrNull('rev-parse --short HEAD') ?? ''
 const branchFromGit = gitOrNull('rev-parse --abbrev-ref HEAD') ?? ''
 
-const commit = commitFromEnv || (commitFromGit.replace(/[^a-f0-9]/gi, '')) || 'unbekannt'
+const commit = commitFromEnv || commitFromGit.replace(/[^a-f0-9]/gi, '') || 'unbekannt'
 const branch = branchFromEnv || branchFromGit || 'unbekannt'
 
 const buildDate = new Date().toISOString()
