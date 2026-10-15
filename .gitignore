@@ -18,6 +18,8 @@ src/version.ts
 .env
 .env.*
 !.env.example
+# Coverage-Output (vitest --coverage)
+coverage/
 server/.env
 
 # Server-Local-Daten (embedded Postgres, Fotos, Build-Cache)

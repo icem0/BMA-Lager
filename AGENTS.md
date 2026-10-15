@@ -14,6 +14,14 @@ Regeln für alle Coding-Agents und Entwickler, die an diesem Projekt arbeiten.
 - Jede Buchung hat eine **UUID** (kein auto-increment, keine laufende Nummer) und einen Zeitstempel.
 - Buchungen sind unveränderlich. Korrekturen erfolgen durch Storno- oder Gegenbuchungen.
 
+### Konfiguration vs. Einstellungen
+
+Klar trennen — beides kommt **nicht** zusammen in der DB ab:
+
+- **Konfiguration** (App-weit, ENV, beim Container-Start): `JWT_SECRET`, `CORS_ORIGIN`, `FOTOS_MAX_BYTES`, `RATE_LIMIT_*`, `LOG_LEVEL`, `COOKIE_*`, `DB_*`. Wird vom API-Container aus der `.env` gelesen, lebt nicht in PostgreSQL.
+- **Einstellungen** (User-/Fach-Präferenzen, änderbar zur Laufzeit, Cross-Device-synchronisiert): `artikelTypen` (global, Admin-only), `sprache` und `standardStandortId` (per-User). Liegen in der `einstellungen`-Tabelle (PK = `(key, user_id)`), LWW auf `geaendert_am`. Die PWA spiegelt sie zusätzlich in IndexedDB (Dexie v5, Compound-Key `[key+userId]`, `userId = ''` als globaler Marker — Domäne arbeitet mit `null`).
+- **Persistenz**: `einstellungen` läuft über das `pgdata`-Volume des API-Containers, nicht über ein eigenes Volume. Backups via `pg_dump`.
+
 ## Build-Metadaten in der PWA
 
 `scripts/write-version.mjs` läuft vor jedem Build und schreibt `src/version.ts`
