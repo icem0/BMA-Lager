@@ -5,20 +5,24 @@
 # die Docker fuer ungebundene Postgres-Mounts anlegt), zieht die
 # aktuellen GHCR-Images und startet den Stack neu.
 #
-# Ergebnis: leere DB, leerer kein Admin -> PWA zeigt Setup-Formular.
+# Ergebnis: leere DB, kein Admin -> PWA zeigt Setup-Formular.
 # Foto-Daten unter ./.data/fotos bleiben erhalten (Bind-Mount, kein
 # named volume -> wird von `down -v` nicht beruehrt).
 #
 # Aufruf:
-#   pwsh ./scripts/bma-restart.ps1
-#   pwsh ./scripts/bma-restart.ps1 -WaitForSha 82877e68...   # nach Push warten
+#   powershell -File ./scripts/bma-restart.ps1
+#   powershell -File ./scripts/bma-restart.ps1 -WaitForSha 82877e68... -WaitTimeoutSec 300
 #
 # Parameter:
-#   -WaitForSha <sha>   Wartet nach 'down', bis das GHCR-Image
-#   mit Tag <sha> erreichbar ist (Docker Registry HTTP API).
-#   Praktisch fuer Auto-Redeploy via Git post-push-Hook.
-#   -WaitTimeoutSec <n> Timeout fuer -WaitForSha (default 300).
+#   -WaitForSha <sha>   Wartet nach 'up', bis die GHCR-Images fuer
+#                       diesen SHA verfuegbar sind. Praktisch nach
+#                       'git push', um direkt zu deployen sobald CI
+#                       die Images gebaut hat.
+#   -WaitTimeoutSec <n> Timeout fuer -WaitForSha (default 60).
 #   -SkipPull           Ueberspringt `docker compose pull`.
+#
+# Voraussetzung: Docker Desktop (stellt `docker buildx imagetools`
+# fuer die GHCR-Erkennung bereit) und WSL 2.
 
 param(
     [string]$WaitForSha = "",
@@ -29,84 +33,51 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-# curl.exe-Pfad einmal ermitteln. PowerShell hat einen `curl`-Alias auf
-# Invoke-WebRequest, der Vorrang vor Pfaden hat. Ueber den Pfad aus
-# Get-Command umgehen wir den Alias.
-$Script:CurlExe = (Get-Command curl.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1).Source
-if (-not $Script:CurlExe) { throw "curl.exe nicht gefunden im PATH" }
-
 # Repo-Root bestimmen (Verzeichnis mit docker-compose.yml).
 $RepoRoot = (Resolve-Path "$PSScriptRoot/..").Path
 Set-Location $RepoRoot
 
 function Get-GhcrDigest {
-    # Returns the sha256 digest of the :latest manifest, or $null.
-    # Uses $Script:CurlExe to dodge PowerShell Invoke-WebRequest quirks
-    # and the `curl` -> Invoke-WebRequest alias.
+    # Liefert den sha256-Digest des :latest-Manifests ueber
+    # `docker buildx imagetools inspect` (das in Docker Desktop
+    # enthalten ist). Bei Fehler: $null.
     param([string]$Image)
 
     $oldEap = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
-        $tokenResp = & $Script:CurlExe -sS --max-time 10 "https://ghcr.io/token?service=ghcr.io&scope=repository:icem0/${Image}:pull"
+        $out = docker buildx imagetools inspect "ghcr.io/icem0/${Image}:latest" 2>$null
         if ($LASTEXITCODE -ne 0) { return $null }
-        $token = ($tokenResp | ConvertFrom-Json).token
+        # Ausgabe parsen: Zeile "Digest:    sha256:..."
+        foreach ($line in $out) {
+            if ($line -match "^\s*Digest:\s*(sha256:\S+)") {
+                return $Matches[1]
+            }
+        }
+        return $null
     } catch {
         return $null
     } finally {
         $ErrorActionPreference = $oldEap
     }
-    if (-not $token) { return $null }
-
-    foreach ($accept in @(
-        "application/vnd.oci.image.index.v1+json",
-        "application/vnd.oci.image.manifest.v1+json",
-        "application/vnd.docker.distribution.manifest.list.v2+json",
-        "application/vnd.docker.distribution.manifest.v2+json"
-    )) {
-        $headers = & $Script:CurlExe -sS -o $null --max-time 10 -D - `
-            -H "Authorization: Bearer $token" `
-            -H "Accept: $accept" `
-            -X HEAD "https://ghcr.io/v2/icem0/${Image}/manifests/latest"
-        if ($LASTEXITCODE -eq 0 -and $headers -match "Docker-Content-Digest:\s*(\S+)") {
-            return $Matches[1]
-        }
-    }
-    return $null
 }
 
 function Test-GhcrManifest {
-    # Returns $true if Image has Tag available at GHCR, $false otherwise.
-    # Uses $Script:CurlExe to dodge PowerShell Invoke-WebRequest quirks
-    # and the `curl` -> Invoke-WebRequest alias.
+    # Prueft, ob ein bestimmter Tag am GHCR-Image existiert.
+    # Strategie: docker buildx imagetools inspect gibt 0 zurueck,
+    # wenn der Tag existiert, != 0 sonst.
     param([string]$Image, [string]$Tag)
 
     $oldEap = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
-        $tokenResp = & $Script:CurlExe -sS --max-time 10 "https://ghcr.io/token?service=ghcr.io&scope=repository:icem0/${Image}:pull"
-        if ($LASTEXITCODE -ne 0) { return $false }
-        $token = ($tokenResp | ConvertFrom-Json).token
+        $null = docker buildx imagetools inspect "ghcr.io/icem0/${Image}:${Tag}" 2>$null
+        return ($LASTEXITCODE -eq 0)
     } catch {
         return $false
     } finally {
         $ErrorActionPreference = $oldEap
     }
-    if (-not $token) { return $false }
-
-    foreach ($accept in @(
-        "application/vnd.oci.image.index.v1+json",
-        "application/vnd.oci.image.manifest.v1+json",
-        "application/vnd.docker.distribution.manifest.list.v2+json",
-        "application/vnd.docker.distribution.manifest.v2+json"
-    )) {
-        $status = & $Script:CurlExe -sS -o $null -w "%{http_code}" --max-time 10 `
-            -H "Authorization: Bearer $token" `
-            -H "Accept: $accept" `
-            -X HEAD "https://ghcr.io/v2/icem0/${Image}/manifests/${Tag}"
-        if ($status -eq "200") { return $true }
-    }
-    return $false
 }
 
 if ($WaitForSha) {
