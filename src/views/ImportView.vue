@@ -206,7 +206,7 @@ async function importNurWaren(): Promise<void> {
 async function backupSpeichern(): Promise<void> {
   const backup = await exportVollBackup()
   const text = backupAlsText(backup)
-  const blob = new Blob([text], { type: 'application/json' })
+  const blob = new Blob([text], { type: 'application/json;charset=utf-8' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
