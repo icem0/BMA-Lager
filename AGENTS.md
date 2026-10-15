@@ -77,3 +77,42 @@ der ENV und nutzt sie mit Fallback auf `git rev-parse` (lokal).
 - **Arcane / Coolify / bare Docker** funktionieren ohne Anpassung — sie alle ziehen `image:`-Referenzen transparent. Der frühere `build:`-Pfad ist absichtlich entfernt.
 - **Update-Workflow**: `git pull && docker compose pull && docker compose up -d` (nicht `--build` — es gibt nichts Lokales zu bauen).
 - **Lockfiles pro Paket**: `package-lock.json` im Root (PWA), `server/package-lock.json` (API). Beide müssen in ihrem jeweiligen Verzeichnis für `npm ci` liegen — beim CI-Build übernimmt das `working-directory` bzw. `cache-dependency-path`.
+
+## Lokaler Test-Workflow (Entwickler-PC, optional)
+
+Wer nicht auf dem Live-Server testen will, kann denselben Stack lokal unter
+`http://localhost:4280` (PWA) bzw. `http://localhost:4242` (API) fahren.
+Stack-Konfiguration steht in `docker-compose.yml` + `docker-compose.override.yml`
+(letztere ersetzt die named Volumes durch Bind-Mounts nach `./.data/` und
+exposed den API-Port direkt am Host).
+
+**Frischer Test pro Lauf** (kein DB-State zwischen Runs):
+
+```
+docker compose down -v && docker compose pull && docker compose up -d
+```
+
+Oder als Wrapper: `scripts/bma-restart.ps1` — stoppt, räumt Volumes weg,
+pullt, startet und gibt Health-/Setup-Status aus.
+
+**Push → warten auf GHCR → Redeploy** (manuell, nicht als Hook):
+
+```
+git push                  # löst in .github/workflows/build-and-push.yml
+                          # das Bauen + Pushen von :latest und :<sha> aus
+pwsh ./scripts/bma-restart.ps1 -WaitForSha <sha> [-WaitTimeoutSec 300]
+```
+
+`bma-restart.ps1 -WaitForSha <sha>` pollt das GHCR-Registry-HTTP-API
+(`https://ghcr.io/v2/icem0/bma-lager-{api,pwa}/manifests/<sha>`), bis beide
+Images für den gerade gepushten Commit verfügbar sind, und startet dann den
+Stack. Den passenden SHA bekommt man mit `git rev-parse HEAD` direkt nach
+dem Push (oder `git log -1 --format=%H origin/main`).
+
+**Warum kein Git-Hook?** Standard-Git kennt kein `post-push`. `pre-push`
+würde den Push künstlich blockieren, `post-commit` feuert auch für
+lokale Commits, die gar nicht gepusht wurden. Der Alias-/Skript-Weg ist
+explizit, pro-PC konfigurierbar und braucht keinen versteckten Hook.
+
+Siehe `README.md` → „Lokales Test-Setup" für die Erstinstallation
+(Docker Desktop, WSL 2, `.env`, `docker-compose.override.yml`).
