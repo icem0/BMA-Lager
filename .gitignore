@@ -26,6 +26,10 @@ server/.env
 server/var/
 server/dist/
 
+# Lokales Test-Compose (nicht einchecken)
+docker-compose.override.yml
+.data/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
