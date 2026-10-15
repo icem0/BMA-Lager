@@ -343,26 +343,57 @@ async function applyLastWriterWins(
 }
 
 /**
- * Konvertiert die Stammdaten-Timestamps (`geaendertAm`, `erstelltAm`) im
- * Push-Payload von ISO-Strings auf `Date`-Instanzen. Drizzle's
- * `PgTimestamp.mapToDriverValue` ruft naemlich `value.toISOString()` auf den
- * Wert, der an `insert()`/`update()` uebergeben wird — Strings haben diese
- * Methode nicht und der Push bricht mit `value.toISOString is not a function`
- * ab. Die PWA schickt timestamps als ISO-Strings (per `artikelSchema` validiert,
- * nicht transformiert), also muessen wir die Konvertierung hier serverseitig
+ * Konvertiert Timestamp-Felder im Push-Payload von ISO-Strings auf
+ * `Date`-Instanzen. Drizzle's `PgTimestamp.mapToDriverValue` ruft
+ * naemlich `value.toISOString()` auf den Wert, der an `insert()`/
+ * `update()` uebergeben wird — Strings haben diese Methode nicht und
+ * der Push bricht mit `value.toISOString is not a function` ab. Die PWA
+ * schickt timestamps als ISO-Strings (per zod-Schema validiert, nicht
+ * transformiert), also muessen wir die Konvertierung hier serverseitig
  * machen. Werte, die bereits `Date` sind, bleiben unveraendert.
+ *
+ * `keys` ist die Liste der Timestamp-Felder, die konvertiert werden
+ * sollen. Unterschiedliche Entitaeten haben unterschiedliche Felder:
+ * - Stammdaten (artikel/standort/projekt): `geaendertAm`, `erstelltAm`
+ * - Buchungen: `erstelltAm`, `clientEingabeAm`
  */
-function normalizeStammdatenTimestamps(
+function normalizeTimestampFields(
   payload: Record<string, unknown>,
+  keys: readonly string[],
 ): Record<string, unknown> {
   const out: Record<string, unknown> = { ...payload }
-  for (const key of ['geaendertAm', 'erstelltAm'] as const) {
+  for (const key of keys) {
     const v = out[key]
     if (typeof v === 'string') {
       out[key] = toDateOrThrow(v)
     }
   }
   return out
+}
+
+/**
+ * Stammdaten-spezifischer Wrapper. Nur hier, damit der Aufruf-Code
+ * sprechend benannt ist (Stammdaten vs. Buchungen) — Logik liegt in
+ * `normalizeTimestampFields`.
+ */
+function normalizeStammdatenTimestamps(
+  payload: Record<string, unknown>,
+): Record<string, unknown> {
+  return normalizeTimestampFields(payload, ['geaendertAm', 'erstelltAm'])
+}
+
+/**
+ * Buchungs-spezifischer Wrapper. Buchungen haben `erstelltAm` (Server-
+ * Spaltenname) und `clientEingabeAm` (optional, UI-Erfassungszeit).
+ * Beide muessen als `Date` an Drizzle uebergeben werden, sonst knallt
+ * `mapToDriverValue` mit `value.toISOString is not a function`. Vorher
+ * wurde das Feld nicht normalisiert — Bug, der jetzt symmetrisch zu
+ * Stammdaten behoben ist.
+ */
+function normalizeBuchungTimestamps(
+  payload: Record<string, unknown>,
+): Record<string, unknown> {
+  return normalizeTimestampFields(payload, ['erstelltAm', 'clientEingabeAm'])
 }
 
 /**
@@ -469,8 +500,9 @@ async function resolveBuchungCreate(
     }
   }
 
-  // 5) Insert
-  await tx.insert(buchungen).values(b as never)
+  // 5) Insert. Timestamp-Felder muessen als Date an Drizzle gehen (siehe
+  //    normalizeBuchungTimestamps-Kommentar).
+  await tx.insert(buchungen).values(normalizeBuchungTimestamps(b as unknown as Record<string, unknown>) as never)
 }
 
 async function resolveBuchung(

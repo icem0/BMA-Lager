@@ -278,3 +278,143 @@ describe('Resolver — Stammdaten-Insert normalisiert ISO-Strings auf Date', () 
     expect(setRow['erstelltAm']).toBeInstanceOf(Date)
   })
 })
+
+// Regression: PWA schickt Buchungs-`erstelltAm`/`clientEingabeAm` ebenfalls als
+// ISO-String (per `buchungSchema` validiert, nicht transformiert). Drizzle's
+// `PgTimestamp.mapToDriverValue` ruft `value.toISOString()` auf — Strings
+// haben die Methode nicht und der Push bricht mit
+// `TypeError: value.toISOString is not a function` ab. Vorher war nur der
+// Stammdaten-Pfad gefixt; Buchungen crashten bis 0.2.19 mit demselben Bug.
+describe('Resolver — Buchungs-Insert normalisiert ISO-Strings auf Date', () => {
+  // Minimaler Mock: jede `select().from().where().limit()` liefert per
+  // Default ein "existiert"-Tupel (Referenzpruefungen in resolveBuchungCreate
+  // fuer artikel/standort). Die Idempotenz-Pruefung auf der buchungen-Tabelle
+  // liefert per Default ein LEERES Array (Buchung existiert noch nicht,
+  // sonst wuerde resolveBuchungCreate frueh returnen). Wir muessen
+  // differenzieren, weil resolveBuchungCreate drei verschiedene Lookups
+  // macht: (1) `select().from(buchungen)` fuer Idempotenz, (2) `select({id})`
+  // .from(artikel)` und (3) `select({id}).from(standorte)`. Leider
+  // koennen wir die Tabellen-Referenzen im Mock nicht zuverlaessig
+  // unterscheiden (Drizzle-Proxies), daher zaehlen wir die Aufrufe und
+  // liefern abwechselnd "leer" und "existiert":
+  //   1. Aufruf: Idempotenz auf buchungen → leer (Insert erlaubt)
+  //   2. Aufruf: artikel existiert → existiert
+  //   3. Aufruf: standort existiert → existiert
+  // Wir nutzen keine Negativ-Bestands-Pruefung (Typ = einlagerung).
+  function makeMockDb(captured: {
+    inserts: Array<Record<string, unknown>>
+    updates: Array<Record<string, unknown>>
+  }) {
+    let selectCallCount = 0
+    const txMock = {
+      select: () => ({
+        from: () => ({
+          where: () => ({
+            limit: () => {
+              selectCallCount++
+              // 1. Aufruf = Idempotenz-Check auf buchungen → leer
+              // 2./3. Aufruf = Referenz-Checks → existiert
+              if (selectCallCount === 1) return Promise.resolve([])
+              return Promise.resolve([{ id: 'exists' }])
+            },
+          }),
+        }),
+      }),
+      insert: () => ({
+        values: (v: Record<string, unknown>) => {
+          captured.inserts.push(v)
+          return Promise.resolve()
+        },
+      }),
+      update: () => ({
+        set: (v: Record<string, unknown>) => {
+          captured.updates.push(v)
+          return { where: () => Promise.resolve() }
+        },
+      }),
+    }
+    return { transaction: (fn: (tx: typeof txMock) => Promise<void>) => fn(txMock) } as never
+  }
+
+  it('buchung create: erstelltAm/clientEingabeAm werden als Date an insert übergeben', async () => {
+    const { resolvePush } = await import('../sync/resolver.js')
+    const captured = {
+      inserts: [] as Array<Record<string, unknown>>,
+      updates: [] as Array<Record<string, unknown>>,
+    }
+    const dbMock = makeMockDb(captured)
+
+    await resolvePush(
+      dbMock,
+      [
+        {
+          op: 'create',
+          entity: 'buchung',
+          payload: {
+            id: 'b-1',
+            artikelId: 'a-1',
+            standortId: 's-1',
+            typ: 'einlagerung',
+            menge: 5,
+            erstelltAm: '2026-10-15T10:00:00.000Z',
+            clientEingabeAm: '2026-10-15T09:30:00.000Z',
+            erstelltVon: 'u1',
+            storno: false,
+          },
+        },
+      ],
+      'u1',
+      'user',
+    )
+
+    // 1× buchungen + 1× auditLog
+    expect(captured.inserts.length).toBeGreaterThanOrEqual(1)
+    const buchungInsert = captured.inserts.find((r) => 'menge' in r)
+    expect(buchungInsert).toBeDefined()
+    const row = buchungInsert!
+    expect(row['erstelltAm']).toBeInstanceOf(Date)
+    expect(row['clientEingabeAm']).toBeInstanceOf(Date)
+    expect((row['erstelltAm'] as Date).toISOString()).toBe('2026-10-15T10:00:00.000Z')
+    expect((row['clientEingabeAm'] as Date).toISOString()).toBe('2026-10-15T09:30:00.000Z')
+  })
+
+  it('buchung create: clientEingabeAm ist optional (undefined) und wird uebersprungen', async () => {
+    const { resolvePush } = await import('../sync/resolver.js')
+    const captured = {
+      inserts: [] as Array<Record<string, unknown>>,
+      updates: [] as Array<Record<string, unknown>>,
+    }
+    const dbMock = makeMockDb(captured)
+
+    await resolvePush(
+      dbMock,
+      [
+        {
+          op: 'create',
+          entity: 'buchung',
+          payload: {
+            id: 'b-2',
+            artikelId: 'a-1',
+            standortId: 's-1',
+            typ: 'einlagerung',
+            menge: 1,
+            erstelltAm: '2026-10-15T10:00:00.000Z',
+            // clientEingabeAm bewusst weggelassen
+            erstelltVon: 'u1',
+            storno: false,
+          },
+        },
+      ],
+      'u1',
+      'user',
+    )
+
+    const buchungInsert = captured.inserts.find((r) => 'menge' in r)
+    expect(buchungInsert).toBeDefined()
+    const row = buchungInsert!
+    expect(row['erstelltAm']).toBeInstanceOf(Date)
+    // clientEingabeAm bleibt undefined — normalizeBuchungTimestamps fasst
+    // nur Strings an, ueberspringt undefined-Werte.
+    expect(row['clientEingabeAm']).toBeUndefined()
+  })
+})
