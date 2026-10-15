@@ -266,7 +266,12 @@ function updateStatus(patch: Partial<SyncStatus>): void {
 
 // ---------- API-Calls ----------
 
-async function fetchSnapshot(
+/**
+ * Lädt einen Snapshot vom Server. Wird vom regulären Sync-Pfad und vom
+ * "Lokale DB löschen"-Flow benutzt — daher exportiert, nicht privat.
+ * `since` ist optional: leerer String zieht den kompletten Snapshot.
+ */
+export async function fetchSnapshot(
   apiBase: string,
   token: string | null,
   since: string,
