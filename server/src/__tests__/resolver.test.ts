@@ -58,20 +58,19 @@ describe('applyLastWriterWinsMock (Server-Version)', () => {
 // als ISO-String, nicht als Date. Der Resolver muss das normalisieren, bevor
 // `applyLastWriterWinsMock` darauf `.toISOString()` ruft.
 describe('Resolver — Drizzle-string-gaendertAm Normalisierung', () => {
+  // Simuliert das, was Drizzle zurückgibt: ein ISO-String statt Date.
+  // Wird vor applyLastWriterWinsMock in Date gewrappt.
+  function toDate(v: string | Date): Date {
+    return v instanceof Date ? v : new Date(v)
+  }
+
   it('wirft NICHT, wenn serverGeaendertAm als String ankommt (postgres-js-Driver)', () => {
-    // Simuliert das, was Drizzle zurückgibt: ein ISO-String statt Date.
     const serverGeaendertAmString = '2026-10-14T11:00:00.000Z'
     const incomingGeaendertAm = new Date('2026-10-14T12:00:00.000Z')
 
-    // Der Fix: vor applyLastWriterWinsMock in Date wrappen.
-    const normalized =
-      serverGeaendertAmString instanceof Date
-        ? serverGeaendertAmString
-        : new Date(serverGeaendertAmString)
-
     expect(() =>
       applyLastWriterWinsMock({
-        serverGeaendertAm: normalized,
+        serverGeaendertAm: toDate(serverGeaendertAmString),
         incomingGeaendertAm,
         id: 'a1',
       }),
@@ -82,14 +81,9 @@ describe('Resolver — Drizzle-string-gaendertAm Normalisierung', () => {
     const serverGeaendertAmString = '2026-10-14T13:00:00.000Z' // Server ist NEUER
     const incomingGeaendertAm = new Date('2026-10-14T12:00:00.000Z')
 
-    const normalized =
-      serverGeaendertAmString instanceof Date
-        ? serverGeaendertAmString
-        : new Date(serverGeaendertAmString)
-
     expect(() =>
       applyLastWriterWinsMock({
-        serverGeaendertAm: normalized,
+        serverGeaendertAm: toDate(serverGeaendertAmString),
         incomingGeaendertAm,
         id: 'a1',
       }),

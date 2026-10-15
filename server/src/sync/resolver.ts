@@ -223,13 +223,38 @@ async function applyLastWriterWins(
     await tx.insert(table).values(payload as never)
     return
   }
+  // Drizzle's postgres-js-Driver liefert `timestamp with timezone` als ISO-String,
+  // nicht als Date. Wir normalisieren auf Date, weil der Test-Helper (und jede
+  // andere Logik) `.toISOString()` darauf aufruft.
+  const serverGeaendertAm = toDateOrThrow(current.geaendertAm)
   // Reine Logik in Test-Helper extrahiert
   applyLastWriterWinsMock({
-    serverGeaendertAm: current.geaendertAm,
+    serverGeaendertAm,
     incomingGeaendertAm,
     id,
   })
   await tx.update(table).set(payload as never).where(eq(table.id, id))
+}
+
+/**
+ * Normalisiert einen Drizzle-Timestamp-Wert auf `Date`. Akzeptiert Date,
+ * ISO-String oder numerische Epochen-Millisekunden. Wirft, wenn keines davon
+ * vorliegt, weil ein nicht-erkannter Timestamp ein Bug wäre, den wir nicht
+ * stillschweigend uebergehen wollen.
+ */
+function toDateOrThrow(v: unknown): Date {
+  if (v instanceof Date) return v
+  if (typeof v === 'string') {
+    const d = new Date(v)
+    if (!Number.isNaN(d.getTime())) return d
+  }
+  if (typeof v === 'number') {
+    const d = new Date(v)
+    if (!Number.isNaN(d.getTime())) return d
+  }
+  throw new TypeError(
+    `toDateOrThrow: nicht-erkannter Timestamp-Wert (${typeof v}): ${String(v)}`,
+  )
 }
 
 // ---------- Buchungs-Resolver ----------
@@ -352,10 +377,7 @@ async function resolveEinstellung(
   // Auch hier: Drizzle-string-vs-Date normalisieren.
   const existingRow = existing[0]
   if (!existingRow) return
-  const existingGeaendertAm =
-    existingRow.geaendertAm instanceof Date
-      ? existingRow.geaendertAm
-      : new Date(existingRow.geaendertAm as unknown as string)
+  const existingGeaendertAm = toDateOrThrow(existingRow.geaendertAm)
   if (incomingGeaendertAm.getTime() <= existingGeaendertAm.getTime()) {
     return
   }
