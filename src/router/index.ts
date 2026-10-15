@@ -24,7 +24,6 @@ import KommissionView from '../views/KommissionView.vue'
 import StandortListView from '../views/StandortListView.vue'
 import SettingsView from '../views/SettingsView.vue'
 import ImportView from '../views/ImportView.vue'
-import ArtikelTypenView from '../views/ArtikelTypenView.vue'
 import LoginView from '../views/LoginView.vue'
 import PasswortAendernView from '../views/PasswortAendernView.vue'
 import UserVerwaltungView from '../views/UserVerwaltungView.vue'
@@ -55,11 +54,6 @@ const routes: RouteRecordRaw[] = [
   },
   { path: '/standorte', name: 'standorte', component: StandortListView },
   { path: '/einstellungen', name: 'einstellungen', component: SettingsView },
-  {
-    path: '/einstellungen/typen',
-    name: 'einstellungen-typen',
-    component: ArtikelTypenView,
-  },
   {
     path: '/einstellungen/user',
     name: 'einstellungen-user',

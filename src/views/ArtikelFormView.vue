@@ -10,7 +10,7 @@ const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const artikelStore = useArtikelStore()
-const { nurKonfigurierte } = useArtikelTypen()
+const { alleWaehlbaren } = useArtikelTypen()
 
 interface Form {
   titel: string
@@ -27,7 +27,7 @@ interface Form {
 const initialForm: Form = (() => {
   return {
     titel: '',
-    typ: nurKonfigurierte.value[0] ?? '',
+    typ: '',
     status: 'verfuegbar',
     lieferant: '',
     verpackungseinheit: 1,
@@ -59,10 +59,6 @@ async function speichern(): Promise<void> {
   fehler.value = ''
   if (!formular.value.titel.trim()) {
     fehler.value = t('view.artikel.form.pflicht') + ': ' + t('view.artikel.form.titel')
-    return
-  }
-  if (!formular.value.typ) {
-    fehler.value = t('view.artikel.form.pflicht') + ': ' + t('view.artikel.form.typ')
     return
   }
   laufend.value = true
@@ -113,14 +109,14 @@ const statusOptionen: ArtikelStatus[] = [
           <input v-model="formular.titel" required autocomplete="off" :disabled="laufend" />
         </label>
         <label>
-          <span>{{ t('view.artikel.form.typ') }} *</span>
-          <select v-model="formular.typ" required :disabled="laufend">
-            <option value="" disabled>— wählen —</option>
-            <option v-for="typ in nurKonfigurierte" :key="typ" :value="typ">{{ typ }}</option>
+          <span>{{ t('view.artikel.form.typ') }} {{ t('view.artikel.form.typOptional') }}</span>
+          <select v-model="formular.typ" :disabled="laufend">
+            <option value="">{{ t('view.artikel.form.typKeiner') }}</option>
+            <option v-for="typ in alleWaehlbaren" :key="typ" :value="typ">{{ typ }}</option>
           </select>
           <small class="hint">
             Typen werden unter
-            <RouterLink to="/einstellungen/typen">Einstellungen → Typen</RouterLink>
+            <RouterLink to="/einstellungen">Einstellungen</RouterLink>
             gepflegt.
           </small>
         </label>

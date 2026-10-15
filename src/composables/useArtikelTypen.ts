@@ -49,6 +49,10 @@ export function useArtikelTypen() {
     typVerwendungen.value.filter((t) => t.konfiguriert).map((t) => t.typ),
   )
 
+  /** Konfigurierte + verwaiste Typen in stabiler Reihenfolge (für Dropdown
+   *  im Artikel-Form, damit Artikel mit verwaistem Typ bearbeitbar bleiben). */
+  const alleWaehlbaren = computed<string[]>(() => typVerwendungen.value.map((t) => t.typ))
+
   /** Alle je benutzten Typen (z. B. für Filter-Dropdown in der Artikel-Liste). */
   const alleBenutzten = computed<string[]>(() =>
     [...new Set(typVerwendungen.value.map((t) => t.typ))].sort(),
@@ -65,6 +69,7 @@ export function useArtikelTypen() {
   return {
     typVerwendungen,
     nurKonfigurierte,
+    alleWaehlbaren,
     alleBenutzten,
     anzahlFuerTyp,
     istInVerwendung,

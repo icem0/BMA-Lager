@@ -32,16 +32,7 @@ export interface Settings {
 const DEFAULTS: Settings = {
   sprache: 'de',
   standardStandortId: null,
-  artikelTypen: [
-    'Koppler',
-    'Alarmierung',
-    'FW Peripherie',
-    'Zubehör',
-    'Sondermelder',
-    'Modul',
-    'Netzteil',
-    'Verbrauchsmaterial',
-  ],
+  artikelTypen: ['Zubehör', 'Verbrauchsmaterial'],
 }
 
 const GLOBAL_KEYS = new Set<string>(['artikelTypen'])
