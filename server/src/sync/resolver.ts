@@ -2,7 +2,14 @@
 //
 // Strategie:
 //   * Buchungen sind append-only — keine Konflikte. Wir prüfen Negativ-Bestand
-//     (für 'entnahme') und unbekannte Referenzen.
+//     (für 'entnahme' UND 'umlagerung') und unbekannte Referenzen.
+//     Storno ist idempotent: zweimal inserten derselben Storno-Buchung ist
+//     No-Op; ein zweiter Storno aufs gleiche Original wird ebenfalls
+//     geschluckt.
+//   * Umlagerungen werden atomar gepusht: beide Hälften mit gleicher
+//     paarId werden in EINER DB-Transaktion angelegt. Fehlt die Hälfte,
+//     schlägt der Push fehl und der Client pusht beim nächsten Tick
+//     erneut.
 //   * Artikel/Standort/Projekte: Last-Writer-Wins auf `geaendertAm`.
 //     Wenn die Server-Version neuer ist als die eingehende, wird die Server-
 //     Version beibehalten (Conflict-Response).
@@ -77,7 +84,47 @@ export async function resolvePush(
 ): Promise<ResolverResult> {
   const result: ResolverResult = { accepted: [], conflicts: [], errors: [] }
 
-  for (const op of ops) {
+  // Phase 1: Umlagerungs-Paare (gleiche paarId) atomar in EINER Transaktion.
+  // Einzelne Hälften werden als Conflict markiert (Retry beim nächsten
+  // Sync, wenn die andere Hälfte angekommen ist).
+  const paarBuckets = new Map<string, Array<Extract<PushOp, { entity: 'buchung' }>>>()
+  const seenIndices = new Set<number>()
+  for (let i = 0; i < ops.length; i++) {
+    const op = ops[i]
+    if (
+      op &&
+      op.entity === 'buchung' &&
+      (op.payload as { typ?: unknown }).typ === 'umlagerung' &&
+      typeof (op.payload as { paarId?: unknown }).paarId === 'string'
+    ) {
+      const b = op as Extract<PushOp, { entity: 'buchung' }>
+      const list = paarBuckets.get(b.payload.paarId as string) ?? []
+      list.push(b)
+      paarBuckets.set(b.payload.paarId as string, list)
+      seenIndices.add(i)
+    }
+  }
+  for (const [paarId, list] of paarBuckets) {
+    if (list.length === 1) {
+      list[0]?.payload.id !== undefined &&
+        result.conflicts.push({
+          id: list[0].payload.id,
+          reason: `Umlagerungspartner mit paarId ${paarId} fehlt — erneuter Sync erforderlich`,
+        })
+    } else {
+      try {
+        await resolveUmlagerungPaar(db, list)
+        for (const op of list) result.accepted.push(op.payload.id)
+      } catch (err) {
+        for (const op of list) pushBuchungsError(result, op.payload.id, err)
+      }
+    }
+  }
+
+  // Phase 2: Restliche ops sequenziell.
+  for (let i = 0; i < ops.length; i++) {
+    if (seenIndices.has(i)) continue
+    const op = ops[i]!
     try {
       await db.transaction(async (tx) => {
         switch (op.entity) {
@@ -98,7 +145,6 @@ export async function resolvePush(
             break
         }
 
-        // Audit-Log
         const entitaetId =
           op.entity === 'einstellung'
             ? `${op.payload.key}#${op.payload.userId ?? 'global'}`
@@ -116,32 +162,40 @@ export async function resolvePush(
         result.accepted.push(entitaetId)
       })
     } catch (err) {
-      if (err instanceof ConflictError) {
-        result.conflicts.push({ id: op.payload.id, reason: err.message })
-      } else if (err instanceof NegativerBestandError) {
-        result.errors.push({
-          id: op.payload.id,
-          code: err.code,
-          message: err.message,
-          currentBestand: err.aktuellerBestand,
-        })
-      } else if (err instanceof UnbekannteReferenzError || err instanceof ValidationError) {
-        result.errors.push({
-          id: op.payload.id,
-          code: err.code,
-          message: err.message,
-        })
-      } else {
-        result.errors.push({
-          id: op.payload.id,
-          code: 'INTERNAL',
-          message: err instanceof Error ? err.message : String(err),
-        })
-      }
+      pushBuchungsError(result, op.payload.id, err)
     }
   }
 
   return result
+}
+
+/**
+ * Klassifiziert einen Resolver-Wurf und ordnet ihn der passenden
+ * `ResolverResult`-Liste zu.
+ */
+function pushBuchungsError(result: ResolverResult, id: string, err: unknown): void {
+  if (err instanceof ConflictError) {
+    result.conflicts.push({ id, reason: err.message })
+  } else if (err instanceof NegativerBestandError) {
+    result.errors.push({
+      id,
+      code: err.code,
+      message: err.message,
+      currentBestand: err.aktuellerBestand,
+    })
+  } else if (err instanceof UnbekannteReferenzError || err instanceof ValidationError) {
+    result.errors.push({
+      id,
+      code: err.code,
+      message: err.message,
+    })
+  } else {
+    result.errors.push({
+      id,
+      code: 'INTERNAL',
+      message: err instanceof Error ? err.message : String(err),
+    })
+  }
 }
 
 // ---------- Conflict ----------
@@ -259,38 +313,58 @@ function toDateOrThrow(v: unknown): Date {
 
 // ---------- Buchungs-Resolver ----------
 
-async function resolveBuchung(
+interface BuchungPayload {
+  id: string
+  artikelId: string
+  standortId: string
+  standortZielId?: string | null
+  typ: 'einlagerung' | 'entnahme' | 'umlagerung' | 'inventur' | 'kommission' | 'storno'
+  menge: number
+  paarId?: string | null
+  projekt?: string | null
+  erstelltAm: string
+  clientEingabeAm?: string | null
+  erstelltVon: string
+  kommentar?: string | null
+  mitteilungAn?: string | null
+  stornoVon?: string | null
+  storno: boolean
+  storniertDurch?: string | null
+}
+
+/**
+ * Validiert und insertet eine einzelne Buchung in der laufenden
+ * Transaktion. Wird sowohl von `resolveBuchung` (Einzelpush) als auch
+ * von `resolveUmlagerungPaar` (atomic Paar-Push) aufgerufen — daher
+ * die Trennung von Audit-Log.
+ */
+async function resolveBuchungCreate(
   tx: Tx,
-  op: Extract<PushOp, { entity: 'buchung' }>,
+  b: BuchungPayload,
   db: PostgresJsDatabase<typeof schema>,
 ): Promise<void> {
-  if (op.op !== 'create') {
-    throw new ValidationError('buchung.op', 'nur "create" erlaubt (append-only)')
-  }
-  const b = op.payload as {
-    id: string
-    artikelId: string
-    standortId: string
-    standortZielId?: string | null
-    typ: 'einlagerung' | 'entnahme' | 'umlagerung' | 'inventur' | 'kommission' | 'storno'
-    menge: number
-    paarId?: string | null
-    projekt?: string | null
-    erstelltAm: string
-    clientEingabeAm?: string | null
-    erstelltVon: string
-    kommentar?: string | null
-    mitteilungAn?: string | null
-    stornoVon?: string | null
-    storno: boolean
-    storniertDurch?: string | null
-  }
-
   // 1) Idempotenz: gleiche ID → 200 duplicate
   const existing = await tx.select().from(buchungen).where(eq(buchungen.id, b.id)).limit(1)
   if (existing.length > 0) return
 
-  // 2) Referenz-Check
+  // 2) Storno-Idempotenz: zweimal dieselbe Buchung stornieren führt zu
+  //    zwei verschiedenen Storno-IDs (verschiedene Outbox-Pushes). Wir
+  //    lehnen den zweiten Storno ab, wenn das Original bereits
+  //    `storno=true` ist — verhindert Doppel-Storno über parallele
+  //    Clients. Wenn das Original noch nicht angekommen ist (race), wird
+  //    der Storno vorgemerkt und landet beim Eintreffen des Originals.
+  if (b.typ === 'storno' && b.stornoVon) {
+    const origRows = await tx
+      .select({ id: buchungen.id, storno: buchungen.storno })
+      .from(buchungen)
+      .where(eq(buchungen.id, b.stornoVon))
+      .limit(1)
+    if (origRows[0]?.storno === true) {
+      return // doppelter Storno: idempotent no-op
+    }
+  }
+
+  // 3) Referenz-Check
   const a = await tx.select({ id: artikel.id }).from(artikel).where(eq(artikel.id, b.artikelId)).limit(1)
   if (a.length === 0) throw new UnbekannteReferenzError('artikel', b.artikelId)
   const s = await tx
@@ -308,8 +382,11 @@ async function resolveBuchung(
     if (s2.length === 0) throw new UnbekannteReferenzError('standort', b.standortZielId)
   }
 
-  // 3) Negativ-Bestand-Check (nur für entnahme)
-  if (b.typ === 'entnahme' && !b.storno) {
+  // 4) Negativ-Bestand-Check.
+  //    Entnahme: klar.
+  //    Umlagerung: trägt negative Menge am Quellstandort — wenn der
+  //    Bestand dort negativ würde, ist die Umlagerung ungültig.
+  if ((b.typ === 'entnahme' || b.typ === 'umlagerung') && !b.storno) {
     const aktuell = await berechneBestand(db, b.artikelId, b.standortId)
     const neuerBestand = aktuell - Math.abs(b.menge)
     if (neuerBestand < 0) {
@@ -317,8 +394,35 @@ async function resolveBuchung(
     }
   }
 
-  // 4) Insert
+  // 5) Insert
   await tx.insert(buchungen).values(b as never)
+}
+
+async function resolveBuchung(
+  tx: Tx,
+  op: Extract<PushOp, { entity: 'buchung' }>,
+  db: PostgresJsDatabase<typeof schema>,
+): Promise<void> {
+  if (op.op !== 'create') {
+    throw new ValidationError('buchung.op', 'nur "create" erlaubt (append-only)')
+  }
+  await resolveBuchungCreate(tx, op.payload as BuchungPayload, db)
+}
+
+/**
+ * Pusht ein Umlagerungs-Paar atomar in EINER DB-Transaktion. Beide
+ * Hälften werden gemeinsam validiert und eingefügt — entweder beide
+ * oder keine.
+ */
+async function resolveUmlagerungPaar(
+  db: PostgresJsDatabase<typeof schema>,
+  ops: ReadonlyArray<Extract<PushOp, { entity: 'buchung' }>>,
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    for (const op of ops) {
+      await resolveBuchungCreate(tx, op.payload as BuchungPayload, tx as unknown as PostgresJsDatabase<typeof schema>)
+    }
+  })
 }
 
 // ---------- Einstellungs-Resolver ----------

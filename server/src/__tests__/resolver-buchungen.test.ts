@@ -49,10 +49,49 @@ describe('Resolver — Strategie', () => {
   })
 })
 
-describe('resolvePush-Signatur', () => {
-  it('akzeptiert den erwarteten Eingabetyp', () => {
-    const ops: PushOp[] = []
-    expect(Array.isArray(ops)).toBe(true)
+describe('resolvePush — Buchungs-Resolver', () => {
+  it('Umlagerung mit fehlender Hälfte wird als Conflict markiert (Retry beim nächsten Sync)', async () => {
+    // Nur die Entnahme-Hälfte einer Umlagerung, ohne den Pair-Partner.
+    // resolvePush muss dies als Conflict zurückgeben, damit der Client beim
+    // nächsten Tick erneut pusht, sobald auch die Einlagerung-Hälfte da ist.
+    const { resolvePush } = await import('../sync/resolver.js')
+    // Minimaler Mock: nur die Methoden, die resolvePush aufruft.
+    const txMock = {
+      select: () => ({
+        from: () => ({
+          where: () => ({
+            limit: () => Promise.resolve([]),
+          }),
+        }),
+      }),
+      insert: () => ({ values: () => Promise.resolve() }),
+    }
+    const dbMock = {
+      transaction: (fn: (tx: typeof txMock) => Promise<void>) => fn(txMock),
+    } as never
+
+    const ops: PushOp[] = [
+      {
+        op: 'create',
+        entity: 'buchung',
+        payload: {
+          id: 'uml-1',
+          artikelId: 'a1',
+          standortId: 's1',
+          standortZielId: 's2',
+          typ: 'umlagerung',
+          menge: -5,
+          paarId: 'paar-1',
+          erstelltAm: '2025-04-14T11:00:00.000Z',
+          erstelltVon: 'u1',
+          storno: false,
+        },
+      },
+    ]
+    const result = await resolvePush(dbMock, ops, 'u1', 'user')
+    expect(result.conflicts).toHaveLength(1)
+    expect(result.conflicts[0]?.reason).toContain('paar-1')
+    expect(result.accepted).toHaveLength(0)
   })
 })
 

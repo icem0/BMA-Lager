@@ -142,4 +142,6 @@ export interface OutboxEintrag {
   syncedAt: Iso | null
   attempts: number
   lastError: string | null
+  quarantinedAt: Iso | null
+  quarantineReason: string | null
 }

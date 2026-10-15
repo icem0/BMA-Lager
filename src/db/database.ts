@@ -186,6 +186,30 @@ export class BmaLagerDb extends Dexie {
           await tx.table('einstellungen2').clear()
         }
       })
+
+    // v7: Outbox-Quarantäne. Zwei neue Felder + Index auf `quarantinedAt`,
+    // damit die UI quarantinierte Items schnell auflisten kann.
+    this.version(7)
+      .stores({
+        artikel: 'id, sharePointId, typ, status, titel',
+        standorte: 'id, name, typ, archiviert',
+        buchungen:
+          'id, artikelId, standortId, standortZielId, typ, erstelltAm, storno, stornoVon, paarId, serverId',
+        projekte: 'id, nummer, archiviert',
+        einstellungen: '[key+userId], key, userId',
+        auditLog: 'id, aktion, entitaet, entitaetId, zeit',
+        outbox: 'id, entity, syncedAt, createdAt, quarantinedAt',
+      })
+      .upgrade(async (tx) => {
+        const alle = await tx.table('outbox').toArray()
+        for (const row of alle as Array<Record<string, unknown>>) {
+          if (row['quarantinedAt'] === undefined) row['quarantinedAt'] = null
+          if (row['quarantineReason'] === undefined) row['quarantineReason'] = null
+        }
+        if (alle.length > 0) {
+          await tx.table('outbox').bulkPut(alle)
+        }
+      })
   }
 }
 

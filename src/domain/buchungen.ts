@@ -381,6 +381,11 @@ export async function createKommission(e: KommissionEingabe): Promise<Kommission
     await Promise.all([
       queueOp('buchung', 'create', storno),
       queueOp('buchung', 'create', neubuchung),
+      // Original-Update (storno=true) muss gepusht werden, damit der Server
+      // weiß, dass das Original storniert ist — sonst würde der nächste
+      // Snapshot-Pull die lokale Markierung von der Server-Version
+      // (storno=false) überschreiben.
+      queueOp('buchung', 'create', original),
     ])
     await auditSchreiben('createKommission.storno', storno)
     await auditSchreiben('createKommission.neubuchung', neubuchung)
@@ -447,7 +452,12 @@ export async function stornieren(e: StornoEingabe): Promise<StornoErgebnis> {
     orig.storniertDurch = storno.id
     await db.buchungen.put(orig)
     await db.buchungen.add(storno)
-    await queueOp('buchung', 'create', storno)
+    await Promise.all([
+      queueOp('buchung', 'create', storno),
+      // Original-Update (storno=true) muss gepusht werden, damit der
+      // Server weiß, dass das Original storniert ist.
+      queueOp('buchung', 'create', orig),
+    ])
     await auditSchreiben('stornieren', storno)
   })
   return { storno, original }

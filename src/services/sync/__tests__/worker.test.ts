@@ -100,6 +100,8 @@ async function outboxAdd(
     syncedAt: null,
     attempts: 0,
     lastError: null,
+    quarantinedAt: null,
+    quarantineReason: null,
   })
 }
 
@@ -718,6 +720,107 @@ describe('Sync — 401 / Auth-Reset', () => {
     expect(onAuthRevoked).toHaveBeenCalledTimes(2)
 
     stopSyncWorker()
+  })
+})
+
+describe('Sync — Outbox-Quarantäne', () => {
+  it('releaseQuarantine entfernt quarantinedAt und setzt attempts zurück', async () => {
+    const a = artikelAnlage(neueUuid(), 'A1')
+    await getDb().outbox.add({
+      id: neueUuid(),
+      entity: 'artikel',
+      op: 'create',
+      payload: JSON.stringify(a),
+      createdAt: jetztIso(),
+      syncedAt: null,
+      attempts: 5,
+      lastError: 'x',
+      quarantinedAt: jetztIso(),
+      quarantineReason: 'Test',
+    })
+
+    const { releaseQuarantine, getSyncStatus } = await import('../worker')
+    await releaseQuarantine((await getDb().outbox.toArray())[0]!.id)
+
+    const nach = await getDb().outbox.toArray()
+    expect(nach[0]?.quarantinedAt).toBeNull()
+    expect(nach[0]?.attempts).toBe(0)
+
+    const st = getSyncStatus()
+    expect(st.quarantined).toBe(0)
+    expect(st.pending).toBe(1)
+  })
+
+  it('discardQuarantine entfernt das Item endgültig', async () => {
+    const a = artikelAnlage(neueUuid(), 'A1')
+    await getDb().outbox.add({
+      id: neueUuid(),
+      entity: 'artikel',
+      op: 'create',
+      payload: JSON.stringify(a),
+      createdAt: jetztIso(),
+      syncedAt: null,
+      attempts: 5,
+      lastError: 'x',
+      quarantinedAt: jetztIso(),
+      quarantineReason: 'Test',
+    })
+
+    const { discardQuarantine } = await import('../worker')
+    await discardQuarantine((await getDb().outbox.toArray())[0]!.id)
+
+    expect(await getDb().outbox.count()).toBe(0)
+  })
+
+  it('nextBatch überspringt quarantinierte Items und findet pending weiter hinten', async () => {
+    // 5 synced (mitten in der Outbox) + 1 quarantined + 1 pending
+    for (let i = 0; i < 5; i++) {
+      await getDb().outbox.add({
+        id: neueUuid(),
+        entity: 'artikel',
+        op: 'create',
+        payload: JSON.stringify(artikelAnlage(neueUuid(), `synced-${i}`)),
+        createdAt: jetztIso(),
+        syncedAt: jetztIso(),
+        attempts: 0,
+        lastError: null,
+        quarantinedAt: null,
+        quarantineReason: null,
+      })
+    }
+    await getDb().outbox.add({
+      id: neueUuid(),
+      entity: 'artikel',
+      op: 'create',
+      payload: JSON.stringify(artikelAnlage(neueUuid(), 'quar')),
+      createdAt: jetztIso(),
+      syncedAt: null,
+      attempts: 5,
+      lastError: 'x',
+      quarantinedAt: jetztIso(),
+      quarantineReason: 'x',
+    })
+    await outboxAdd('artikel', 'create', artikelAnlage(neueUuid(), 'pending'))
+
+    const { runSync } = await import('../worker')
+    let pushCalled = false
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === 'string' ? input : input.toString()
+        if (url.endsWith('/api/sync/push') && init?.method === 'POST') {
+          pushCalled = true
+          // Body inspizieren — pending sollte enthalten sein, quar nicht.
+          const body = JSON.parse(init.body as string)
+          const ids = (body.ops as Array<{ payload: { id: string } }>).map((o) => o.payload.id)
+          expect(ids.length).toBe(1) // genau ein pending item
+        }
+        return new Response('not found', { status: 404 })
+      }),
+    )
+
+    await runSync({ token: null, apiBase: 'http://test.local' })
+    expect(pushCalled).toBe(true)
   })
 })
 

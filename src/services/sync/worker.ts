@@ -34,6 +34,10 @@ const BATCH_SIZE = 200
 const BACKOFF_CAP_MS = 60_000
 /** Hard cap für ein vom Server vorgegebenes Retry-After (Cloudflare 502: 60s). */
 const RETRY_AFTER_CAP_MS = 5 * 60_000
+/** Anzahl Fehlversuche, nach denen ein Outbox-Item stillgelegt wird. */
+const QUARANTINE_THRESHOLD = 5
+/** Server-Codes, die ein Item sofort stilllegen (kein Retry hilft). */
+const HARD_QUARANTINE_CODES = new Set(['UNKNOWN_REFERENCE', 'BEREITS_STORNIED'])
 
 // ---------- Backoff (rein, ohne Side-Effects → testbar) ----------
 
@@ -183,9 +187,30 @@ export interface SyncLastFailure {
   }>
 }
 
+/**
+ * Ein manuell stillgelegtes Outbox-Item. Erscheint im Sync-Panel
+ * separat von "Stuck Items" — diese sind absichtlich gestoppt und
+ * warten auf eine Entscheidung des Users.
+ */
+export interface QuarantinedItem {
+  outboxId: string
+  entity: string
+  op: string
+  payloadId: string
+  attempts: number
+  lastError: string | null
+  quarantinedAt: string
+  quarantineReason: string
+  createdAt: string
+}
+
 export interface SyncStatus {
   status: 'idle' | 'syncing' | 'offline' | 'error' | 'origin-unavailable'
   pending: number
+  /** Anzahl manuell stillgelegter Outbox-Items (Quarantäne). */
+  quarantined: number
+  /** Erste paar quarantinierte Items für die UI. */
+  quarantinedItems: QuarantinedItem[]
   lastSyncAt: string | null
   lastError: string | null
   /** Counts pro Tabelle, zuletzt vom Server gemeldet. */
@@ -204,6 +229,8 @@ const LISTENERS = new Set<(s: SyncStatus) => void>()
 let _status: SyncStatus = {
   status: 'idle',
   pending: 0,
+  quarantined: 0,
+  quarantinedItems: [],
   lastSyncAt: null,
   lastError: null,
   serverCounts: null,
@@ -321,15 +348,22 @@ async function pendingCount(): Promise<number> {
   // daher der Full-Scan. Outbox-Größe bleibt im Lager-Use-Case klein
   // (≪ 1k Einträge zwischen Sync-Ticks), ein Index hier wäre teurer
   // als der Scan. Bewusst beibehalten.
+  // `quarantinedAt == null` (nicht `===`), damit Items ohne das Feld
+  // (alte Test-Helper / vor-v7) nicht versehentlich als quarantiniert
+  // zählen.
   const all = await getDb().outbox.toArray()
-  return all.filter((o) => o.syncedAt === null).length
+  return all.filter((o) => o.syncedAt == null && o.quarantinedAt == null).length
 }
 
 async function nextBatch(): Promise<OutboxEintrag[]> {
-  // Dexie unterstützt kein `where('syncedAt').equals(null)` direkt —
-  // wir holen die ersten BATCH_SIZE und filtern in Memory.
-  const all = await getDb().outbox.orderBy('createdAt').limit(BATCH_SIZE).toArray()
-  return all.filter((o) => o.syncedAt === null)
+  // WICHTIG: niemals `limit(BATCH_SIZE)` direkt auf die Outbox-Tabelle
+  // setzen — sonst übersehen wir pending Items, wenn die ersten 200
+  // bereits synced sind (Bug 2025-12). Stattdessen alle pending lesen
+  // und die ersten BATCH_SIZE nehmen.
+  const all = await getDb().outbox.orderBy('createdAt').toArray()
+  return all
+    .filter((o) => o.syncedAt == null && o.quarantinedAt == null)
+    .slice(0, BATCH_SIZE)
 }
 
 async function markSynced(id: string): Promise<void> {
@@ -337,12 +371,88 @@ async function markSynced(id: string): Promise<void> {
 }
 
 async function markFailed(id: string, error: string): Promise<void> {
-  const e = await getDb().outbox.get(id)
+  const db = getDb()
+  const e = await db.outbox.get(id)
   if (!e) return
-  await getDb().outbox.update(id, {
+  // put (statt update) sorgt dafür, dass `quarantinedAt` (falls schon
+  // gesetzt) erhalten bleibt. Dexie's `update` ist zwar partial, aber
+  // in Kombination mit dem späteren `quarantine`-put kann es zu
+  // seltsamen Reihenfolgen kommen — wir schreiben lieber gleich den
+  // ganzen Record neu.
+  await db.outbox.put({
+    id: e.id,
+    entity: e.entity,
+    op: e.op,
+    payload: e.payload,
+    createdAt: e.createdAt,
+    syncedAt: e.syncedAt,
     attempts: e.attempts + 1,
     lastError: error,
+    quarantinedAt: e.quarantinedAt,
+    quarantineReason: e.quarantineReason,
   })
+}
+
+/**
+ * Markiert ein Outbox-Item als stillgelegt. Der Worker pusht es nicht
+ * mehr automatisch; die UI muss es manuell freigeben oder verwerfen.
+ */
+async function quarantine(id: string, reason: string): Promise<void> {
+  const db = getDb()
+  const e = await db.outbox.get(id)
+  if (!e) return
+  await db.outbox.put({
+    id: e.id,
+    entity: e.entity,
+    op: e.op,
+    payload: e.payload,
+    createdAt: e.createdAt,
+    syncedAt: e.syncedAt,
+    attempts: e.attempts,
+    lastError: e.lastError,
+    quarantinedAt: jetztIso(),
+    quarantineReason: reason,
+  })
+}
+
+async function quarantinedCount(): Promise<number> {
+  const all = await getDb().outbox.toArray()
+  return all.filter((o) => o.quarantinedAt != null).length
+}
+
+async function collectQuarantinedItems(limit: number): Promise<QuarantinedItem[]> {
+  const all = await getDb().outbox.orderBy('createdAt').toArray()
+  const quar = all.filter((o) => o.quarantinedAt != null)
+  const out: QuarantinedItem[] = []
+  for (const o of quar.slice(0, limit)) {
+    let payloadId = ''
+    try {
+      const parsed = JSON.parse(o.payload) as { id?: unknown }
+      payloadId = typeof parsed.id === 'string' ? parsed.id : ''
+    } catch {
+      // korrupte payload
+    }
+    out.push({
+      outboxId: o.id,
+      entity: o.entity,
+      op: o.op,
+      payloadId,
+      attempts: o.attempts,
+      lastError: o.lastError,
+      quarantinedAt: o.quarantinedAt ?? '',
+      quarantineReason: o.quarantineReason ?? '',
+      createdAt: o.createdAt,
+    })
+  }
+  return out
+}
+
+async function quarantinedSnapshot(): Promise<{
+  quarantined: number
+  quarantinedItems: QuarantinedItem[]
+}> {
+  const [quar, items] = await Promise.all([quarantinedCount(), collectQuarantinedItems(10)])
+  return { quarantined: quar, quarantinedItems: items }
 }
 
 /**
@@ -351,26 +461,31 @@ async function markFailed(id: string, error: string): Promise<void> {
  * unangetastet (sind eh noch nicht gepusht). Nach erfolgreichem Re-Login
  * werden sie beim nächsten Sync-Lauf wieder gepusht.
  *
- * Hinweis: läuft nur nach Logout/Re-Login (selten). Ein Full-Scan ist
- * hier akzeptabel, weil `attempts`/`lastError` bewusst nicht indiziert
- * sind — die Felder sind nur im Fehlerpfad relevant.
+ * Quarantinierte Items bleiben quarantiniert — der Auth-Reset ist kein
+ * Freigabe-Anlass.
  */
 async function resetOutboxAfterAuthRevoked(): Promise<void> {
   const all = await getDb().outbox.toArray()
   for (const o of all) {
-    if (o.syncedAt === null && (o.attempts > 0 || o.lastError !== null)) {
+    if (
+      o.syncedAt === null &&
+      o.quarantinedAt == null &&
+      (o.attempts > 0 || o.lastError !== null)
+    ) {
       await getDb().outbox.update(o.id, { attempts: 0, lastError: null })
     }
   }
 }
 
 /**
- * Liest die ersten N Outbox-Items mit lastError, die noch nicht synced sind.
- * Dient als Diagnose für die UI: "Was genau hängt?".
+ * Liest die ersten N Outbox-Items mit lastError, die noch nicht synced
+ * und nicht quarantiniert sind. Dient als Diagnose für die UI:
+ * "Was genau hängt?". Quarantinierte Items werden separat über
+ * `collectQuarantinedItems` aufgelistet.
  */
 async function collectStuckItems(limit = 5): Promise<SyncLastFailure['stuckItems']> {
   const all = await getDb().outbox.orderBy('createdAt').toArray()
-  const stuck = all.filter((o) => o.syncedAt === null && o.lastError)
+  const stuck = all.filter((o) => o.syncedAt == null && o.quarantinedAt == null && o.lastError)
   const out: SyncLastFailure['stuckItems'] = []
   for (const o of stuck.slice(0, limit)) {
     let payloadId = ''
@@ -467,6 +582,29 @@ async function applySnapshot(snap: SyncSnapshot): Promise<void> {
 
 // ---------- Sync-Hauptaufruf ----------
 
+/**
+ * Stillgelegt ein Outbox-Item, wenn der Server es dauerhaft ablehnt.
+ * Bedingungen:
+ *  - Fehler-Code in HARD_QUARANTINE_CODES (z. B. unbekannte Referenz)
+ *  - ODER attempts hat QUARANTINE_THRESHOLD erreicht
+ * Idempotent: bereits quarantinierte Items werden nicht doppelt markiert.
+ */
+async function maybeQuarantine(
+  outboxId: string,
+  row: OutboxEintrag | undefined,
+  errorCode: string,
+): Promise<void> {
+  if (!row || row.quarantinedAt !== null) return
+  const hard = HARD_QUARANTINE_CODES.has(errorCode)
+  const exhausted = row.attempts >= QUARANTINE_THRESHOLD
+  if (hard || exhausted) {
+    const reason = hard
+      ? `Server lehnt dauerhaft ab (${errorCode})`
+      : `Nach ${row.attempts} Fehlversuchen stillgelegt`
+    await quarantine(outboxId, reason)
+  }
+}
+
 export async function runSync(opts: { token: string | null; apiBase: string }): Promise<void> {
   if (_running) return
   _running = true
@@ -511,7 +649,9 @@ export async function runSync(opts: { token: string | null; apiBase: string }): 
           const result = await pushOps(apiBase, token, ops)
           const acceptedIds = new Set(result.accepted)
           const conflictsById = new Map(result.conflicts.map((c) => [c.id, c.reason]))
-          const errorsById = new Map(result.errors.map((e) => [e.id, `${e.code}: ${e.message}`]))
+          const errorsById = new Map(
+            result.errors.map((e) => [e.id, { code: e.code, msg: `${e.code}: ${e.message}` }]),
+          )
           // Diagnose: sammle die ersten paar Server-Fehler, damit die UI
           // zeigen kann, WARUM der Server das Item abgelehnt hat.
           const sampleErrors: SyncLastFailure['sampleErrors'] = result.errors
@@ -522,12 +662,20 @@ export async function runSync(opts: { token: string | null; apiBase: string }): 
             sampleErrors,
           }
           for (const it of items) {
+            const outboxRow = await getDb().outbox.get(it.outboxId)
             if (acceptedIds.has(it.payloadId)) {
               await markSynced(it.outboxId)
             } else if (conflictsById.has(it.payloadId)) {
+              // Quarantäne VOR markFailed — wenn das Item quarantiniert
+              // wird, überschreibt das nachfolgende markFailed sonst die
+              // quarantinedAt-Felder (Dexie's `update` würde das eigentlich
+              // behalten, aber sicherheitshalber so rum).
+              await maybeQuarantine(it.outboxId, outboxRow, 'CONFLICT')
               await markFailed(it.outboxId, `CONFLICT: ${conflictsById.get(it.payloadId)}`)
             } else if (errorsById.has(it.payloadId)) {
-              await markFailed(it.outboxId, errorsById.get(it.payloadId) ?? 'ERROR')
+              const err = errorsById.get(it.payloadId)
+              await maybeQuarantine(it.outboxId, outboxRow, err?.code ?? 'ERROR')
+              await markFailed(it.outboxId, err?.msg ?? 'ERROR')
             }
             // Wenn der Server das Item weder in accepted noch in conflicts/errors
             // erwähnt, lassen wir es unangetastet — kein Hinweis auf Erfolg oder
@@ -550,6 +698,7 @@ export async function runSync(opts: { token: string | null; apiBase: string }): 
                 ...lastPushDiagnosis,
                 stuckItems: await collectStuckItems(5),
               },
+              ...(await quarantinedSnapshot()),
             })
           }
         } catch (e) {
@@ -602,6 +751,7 @@ export async function runSync(opts: { token: string | null; apiBase: string }): 
       lastError: _status.lastFailure?.code === 'PARTIAL_REJECTED' ? _status.lastError : null,
       lastFailure: _status.lastFailure?.code === 'PARTIAL_REJECTED' ? _status.lastFailure : null,
       pending: await pendingCount(),
+      ...(await quarantinedSnapshot()),
       serverCounts,
       serverTime,
       localCounts,
@@ -650,6 +800,7 @@ export async function runSync(opts: { token: string | null; apiBase: string }): 
         status: 'offline',
         lastError: msg,
         pending: await pendingCount(),
+        ...(await quarantinedSnapshot()),
         localCounts,
         nextRetryAt,
         lastFailure: newFailure,
@@ -660,6 +811,7 @@ export async function runSync(opts: { token: string | null; apiBase: string }): 
         status: 'origin-unavailable',
         lastError: msg,
         pending: await pendingCount(),
+        ...(await quarantinedSnapshot()),
         localCounts,
         nextRetryAt,
         lastFailure: newFailure,
@@ -677,6 +829,7 @@ export async function runSync(opts: { token: string | null; apiBase: string }): 
         status: 'error',
         lastError: 'Sitzung abgelaufen — bitte neu anmelden.',
         pending: await pendingCount(),
+        ...(await quarantinedSnapshot()),
         localCounts,
         nextRetryAt: null,
         lastFailure: newFailure,
@@ -698,6 +851,7 @@ export async function runSync(opts: { token: string | null; apiBase: string }): 
         status: 'error',
         lastError: msg,
         pending: await pendingCount(),
+        ...(await quarantinedSnapshot()),
         localCounts,
         nextRetryAt,
         lastFailure: newFailure,
@@ -751,7 +905,13 @@ export async function refreshStatus(opts: {
     lastError = e instanceof Error ? e.message : String(e)
   }
 
-  updateStatus({ localCounts, serverCounts, serverTime, lastError })
+  updateStatus({
+    localCounts,
+    serverCounts,
+    serverTime,
+    lastError,
+    ...(await quarantinedSnapshot()),
+  })
 }
 
 // ---------- Worker-Lifecycle ----------
@@ -829,6 +989,38 @@ export async function queueOp(
     syncedAt: null,
     attempts: 0,
     lastError: null,
+    quarantinedAt: null,
+    quarantineReason: null,
+  })
+}
+
+/**
+ * Gibt ein quarantiniertes Outbox-Item frei. Setzt attempts/lastError
+ * zurück und entfernt quarantinedAt. Der Worker pusht es beim nächsten
+ * Tick wieder.
+ */
+export async function releaseQuarantine(outboxId: string): Promise<void> {
+  await getDb().outbox.update(outboxId, {
+    attempts: 0,
+    lastError: null,
+    quarantinedAt: null,
+    quarantineReason: null,
+  })
+  updateStatus({
+    pending: await pendingCount(),
+    ...(await quarantinedSnapshot()),
+  })
+}
+
+/**
+ * Verwirft ein quarantiniertes Outbox-Item endgültig. Es wird aus der
+ * Outbox entfernt; die zugehörige Domain-Zeile bleibt unverändert.
+ */
+export async function discardQuarantine(outboxId: string): Promise<void> {
+  await getDb().outbox.delete(outboxId)
+  updateStatus({
+    pending: await pendingCount(),
+    ...(await quarantinedSnapshot()),
   })
 }
 
@@ -842,6 +1034,8 @@ export function _resetSyncForTests(): void {
   _status = {
     status: 'idle',
     pending: 0,
+    quarantined: 0,
+    quarantinedItems: [],
     lastSyncAt: null,
     lastError: null,
     serverCounts: null,
