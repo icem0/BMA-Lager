@@ -120,6 +120,47 @@ würde den Push künstlich blockieren, `post-commit` feuert auch für
 lokale Commits, die gar nicht gepusht wurden. Der Alias-/Skript-Weg ist
 explizit, pro-PC konfigurierbar und braucht keinen versteckten Hook.
 
+**Reihenfolge nach `git push` — auf GHCR-Build warten:**
+
+Nach dem Push ist das neue Image **nicht sofort** verfügbar. Erst läuft
+`build-and-push.yml` durch (typisch 1–2 min, je nach Last auch länger),
+dann liegt das Image unter `ghcr.io/icem0/bma-lager-{api,pwa}:latest`
+bzw. `:<sha>`. Wer zu früh `docker compose pull && up -d` macht, kriegt
+das **vorherige** Image und wundert sich, warum der Fix nicht greift.
+
+Richtige Sequenz:
+
+```
+git push
+# Push-Output liefert keinen SHA — wir holen ihn selbst:
+$env:SHA = git rev-parse HEAD
+pwsh ./scripts/bma-restart.ps1 -WaitForSha $env:SHA -WaitTimeoutSec 300
+```
+
+`bma-restart.ps1 -WaitForSha <sha>` pollt das GHCR-Registry-HTTP-API
+für **beide** Images (api + pwa) und startet erst, wenn beide Manifeste
+für den Commit verfügbar sind. Timeout default 60 s — bei Cold-Cache
+(frisches Image, kein Layer-Cache auf GHCR) auf 300 s setzen. Den
+passenden SHA bekommt man alternativ mit
+`git log -1 --format=%H origin/main`.
+
+**Manuelle Variante** wenn der User keinen SHA-Parameter mag:
+
+```
+git push
+# Status pruefen ohne das Terminal zu blockieren:
+gh run list --limit 1 --workflow build-and-push
+# Sobald dort "completed success" steht:
+docker compose pull
+docker compose up -d
+```
+
+Finger weg von `docker compose up -d` zwischen Push und erfolgreichem
+CI-Build — der laufende Stack faengt sich entweder das alte Image
+(`pull` zieht nichts Neues) oder, schlimmer, einen halbfertigen
+Container, der in der Restart-Schleife haengt (`pull` macht bei
+„No such image" mit dem Digest-Mismatch nicht immer das, was man will).
+
 Siehe `README.md` → „Lokales Test-Setup" für die Erstinstallation
 (Docker Desktop, WSL 2, `.env`, `docker-compose.override.yml`).
 
