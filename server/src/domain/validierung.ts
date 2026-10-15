@@ -161,12 +161,56 @@ export const patchUserSchema = z.object({
 /**
  * Initial-Setup: legt den allerersten User an. Darf nur aufgerufen werden,
  * solange noch kein User in der DB existiert — der Server prüft das.
+ *
+ * Nach erfolgreichem Anlegen wird im selben Request zusätzlich das
+ * Hauptlager (Standard-Standort) und 5 Test-Artikel angelegt — siehe
+ * `bootstrapHauptlager` in `auth/setup-routes.ts`.
  */
 export const setupSchema = z.object({
   anzeigename: z.string().min(1, 'Anzeigename ist erforderlich').max(120),
   email: z.string().email(),
   passwort: z.string().min(8, 'Passwort muss mindestens 8 Zeichen haben'),
+  sprache: z.enum(['de-DE', 'en-US']).default('de-DE'),
 })
+
+/**
+ * Lokalisierter Bootstrap-Inhalt. Wird beim allerersten Setup angelegt und
+ * anhand der im Setup gewählten Sprache aufgelöst.
+ */
+export interface BootstrapInhalt {
+  hauptlagerName: string
+  testArtikel: Array<{
+    titel: string
+    typ: string
+    verpackungseinheit: number
+    mindestbestand: number | null
+  }>
+}
+
+export function bootstrapInhalt(locale: 'de-DE' | 'en-US'): BootstrapInhalt {
+  if (locale === 'en-US') {
+    return {
+      hauptlagerName: 'Main Warehouse',
+      testArtikel: [
+        { titel: 'Sample Article 1', typ: 'Demo', verpackungseinheit: 1, mindestbestand: 0 },
+        { titel: 'Sample Article 2', typ: 'Demo', verpackungseinheit: 1, mindestbestand: 0 },
+        { titel: 'Sample Article 3', typ: 'Demo', verpackungseinheit: 1, mindestbestand: 0 },
+        { titel: 'Sample Article 4', typ: 'Demo', verpackungseinheit: 1, mindestbestand: 0 },
+        { titel: 'Sample Article 5', typ: 'Demo', verpackungseinheit: 1, mindestbestand: 0 },
+      ],
+    }
+  }
+  return {
+    hauptlagerName: 'Hauptlager',
+    testArtikel: [
+      { titel: 'Beispielartikel 1', typ: 'Demo', verpackungseinheit: 1, mindestbestand: 0 },
+      { titel: 'Beispielartikel 2', typ: 'Demo', verpackungseinheit: 1, mindestbestand: 0 },
+      { titel: 'Beispielartikel 3', typ: 'Demo', verpackungseinheit: 1, mindestbestand: 0 },
+      { titel: 'Beispielartikel 4', typ: 'Demo', verpackungseinheit: 1, mindestbestand: 0 },
+      { titel: 'Beispielartikel 5', typ: 'Demo', verpackungseinheit: 1, mindestbestand: 0 },
+    ],
+  }
+}
 
 // ---------- Snapshot-Query ----------
 
