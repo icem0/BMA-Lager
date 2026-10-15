@@ -3,6 +3,9 @@
 <img src="public/bma-lager-logo.png"><br/>
 # BMA-Lager
 
+> [!IMPORTANT]
+> **Dieses Projekt ist umgezogen.** Die aktive Entwicklung läuft unter **[icem0/castel](https://github.com/icem0/castel)** weiter. Dieses Repository ist archiviert (read-only).
+
 **Offline-fähige Lagerverwaltung als PWA mit Multi-User-Sync**
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9-blue?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
