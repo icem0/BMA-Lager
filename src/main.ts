@@ -29,9 +29,14 @@ watch(
   { immediate: true },
 )
 
-// Auth: gespeichertes JWT aus localStorage wiederherstellen.
+// Auth: gespeichertes JWT aus localStorage wiederherstellen und
+// asynchron pruefen, ob der Server ueberhaupt User hat. Bei Offline
+// schlaegt der Check fehl und serverHatUser bleibt null/unknown —
+// die LoginView faellt dann auf Login-Modus zurueck und ermoeglicht
+// Offline-Login mit gecachten Credentials.
 const auth = useAuthStore()
 auth.init()
+void auth.pruefeServerUserState()
 
 // PWA-Service-Worker registrieren.
 if ('serviceWorker' in navigator && import.meta.env.PROD) {

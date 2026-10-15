@@ -10,7 +10,7 @@
 
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import { ApiError, apiFetch, setGlobalToken } from '../auth/api'
+import { ApiError, apiFetch, setGlobalToken, setOn401Handler } from '../auth/api'
 import {
   credLesen,
   credSchreiben,
@@ -27,6 +27,7 @@ import {
   aendereRolleServer,
   deaktiviereUserServer,
   holeAktiveUserliste,
+  holeSetupStatus,
   legeUserAnServer,
   setzeAktivServer,
   setzePasswortServer,
@@ -49,6 +50,30 @@ export const useAuthStore = defineStore('auth', () => {
   const email = computed(() => session.value?.email ?? null)
   const anzeigename = computed(() => session.value?.anzeigename ?? '')
   const mussPasswortAendern = computed(() => session.value?.mustChangePassword === true)
+
+  // Server-User-State:
+  //   null  = unbekannt (Boot oder Server nicht erreichbar)
+  //   true  = Server hat mindestens einen User (normaler Login-Modus)
+  //   false = Server meldet setupRequired (DB leer, Setup-Modus noetig)
+  // Wichtig: ein Netzwerk-Fehler darf NICHT zu `false` fuehren, sonst
+  // wuerde Offline-Boot in den Setup-Modus rutschen und offline Login
+  // unmoeglich machen. Wir setzen den State daher nur bei ERFOLGREICHER
+  // Server-Antwort und lassen ihn sonst unveraendert.
+  const serverHatUser = ref<boolean | null>(null)
+
+  async function pruefeServerUserState(): Promise<boolean | null> {
+    try {
+      const status = await holeSetupStatus()
+      const next = !status.setupRequired
+      serverHatUser.value = next
+      return next
+    } catch {
+      // Server nicht erreichbar oder API-Fehler — State bewusst NICHT
+      // auf false setzen. Bleibt auf dem letzten bekannten Wert
+      // (typischerweise null beim ersten Boot).
+      return serverHatUser.value
+    }
+  }
 
   // ---------- Login ----------
 
@@ -81,6 +106,8 @@ export const useAuthStore = defineStore('auth', () => {
     if (serverAntwort) {
       jwtSchreiben(serverAntwort.token)
       setGlobalToken(serverAntwort.token)
+      // Erfolgreicher Server-Login: Server hat definitiv einen User.
+      serverHatUser.value = true
 
       // Offline-Cache: PBKDF2-Hash der Credentials speichern
       const hashed = await hasheText(passwort)
@@ -161,6 +188,12 @@ export const useAuthStore = defineStore('auth', () => {
     setGlobalToken(null)
     sessionSchreiben(null)
     session.value = null
+    // Nach Logout: Server-User-State neu pruefen. Wenn die DB in der
+    // Zwischenzeit leer ist (z. B. docker compose down -v), springt der
+    // State auf false und der Router/LoginView reagieren entsprechend.
+    // Bei Offline schlaegt der Fetch fehl und der State bleibt wie er
+    // war (idempotent).
+    void pruefeServerUserState()
   }
 
   // ---------- Passwort-Änderung ----------
@@ -225,6 +258,15 @@ export const useAuthStore = defineStore('auth', () => {
   function init(): void {
     const jwt = jwtLesen()
     if (jwt) setGlobalToken(jwt)
+    // 401 von beliebigen API-Calls: Server-User-State neu pruefen.
+    // Damit reagiert die PWA auch dann auf "Server hat keinen User
+    // mehr", wenn das mitten in einer aktiven Session passiert
+    // (DB wurde extern geleert). Der eigentliche Redirect wird dann
+    // von der naechsten Router-Navigation bzw. dem naechsten
+    // LoginView-Mount uebernommen.
+    setOn401Handler(() => {
+      void pruefeServerUserState()
+    })
   }
 
   return {
@@ -236,6 +278,8 @@ export const useAuthStore = defineStore('auth', () => {
     email,
     anzeigename,
     mussPasswortAendern,
+    serverHatUser,
+    pruefeServerUserState,
     anmelden,
     abmelden,
     aendereEigenesPasswortMit,

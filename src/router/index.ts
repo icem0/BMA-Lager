@@ -4,6 +4,12 @@
 //   - /login ist IMMER erreichbar
 //   - alle anderen Routen erfordern eine aktive Session (JWT im localStorage)
 //   - Admin-Routen benötigen zusätzlich Rolle=admin
+//   - Wenn der Server nachweislich KEINEN User hat (auth.serverHatUser
+//     === false), wird jede Navigation auf /login gezwungen — die
+//     LoginView schaltet dann inline in den Setup-Modus. Wichtig: nur
+//     reagieren wenn der State DEFINITIV false ist, nicht bei null
+//     (offline/unknown), damit Offline-Login nicht in den Setup-Modus
+//     rutscht.
 
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
@@ -74,6 +80,12 @@ router.beforeEach((to) => {
   const auth = useAuthStore()
   const isPublic = to.meta.public === true
   const requiresAdmin = to.meta.requiresAdmin === true
+
+  // Server hat keinen User → erzwinge /login (zeigt Setup-Modus inline).
+  // Greift nur bei DEFINITIVEM false, nicht bei null (offline/unknown).
+  if (auth.serverHatUser === false && to.name !== 'login') {
+    return { name: 'login' }
+  }
 
   if (isPublic) return true
   if (!auth.istAngemeldet) {

@@ -15,10 +15,26 @@
 //                                    ohne Entrypoint-Generierung).
 //   4. ''  — gleicher Origin (nginx-Reverse-Proxy-Setup).
 //
-// Alle Requests senden Authorization: Bearer <jwt> (falls vorhanden) und
-// behandeln 401 → Auth-Store wird ausgeloggt.
+// Alle Requests senden Authorization: Bearer <jwt> (falls vorhanden).
+// 401 wird als ApiError geworfen; wer darauf reagieren will (Auth-Store
+// re-checken, Redirect erzwingen), registriert einen Handler ueber
+// setOn401Handler. Das verhindert zirkulaere Imports zwischen api.ts
+// und stores/auth.ts.
 
 const LS_API_URL = 'bma.api.url'
+
+/**
+ * Callback, der bei jedem 401 (ausser wenn `noLogoutOn401` gesetzt ist)
+ * aufgerufen wird. Der Auth-Store nutzt das, um den Server-User-State
+ * neu zu pruefen — wenn der Server keine User mehr hat, kann die UI
+ * direkt auf /login (Setup-Modus) umleiten.
+ */
+type On401Handler = () => void | Promise<void>
+let on401Handler: On401Handler | null = null
+
+export function setOn401Handler(handler: On401Handler | null): void {
+  on401Handler = handler
+}
 
 /**
  * Normalisiert eine Basis-URL: entfernt genau ein trailing `/api`, falls
@@ -113,6 +129,13 @@ export async function apiFetch<T = unknown>(path: string, opts: ApiOptions = {})
     const code = (payload as { code?: string } | null)?.code ?? `HTTP_${res.status}`
     const message =
       (payload as { message?: string } | null)?.message ?? res.statusText ?? 'Server-Fehler'
+    if (res.status === 401 && !opts.noLogoutOn401 && on401Handler) {
+      // Auth-Store bekommt die Chance, den Server-User-State neu zu pruefen.
+      // Wir blockieren die Antwort NICHT — der Aufrufer sieht den 401 sofort.
+      void Promise.resolve(on401Handler()).catch(() => {
+        /* bewusst ignorieren */
+      })
+    }
     throw new ApiError(res.status, code, message, payload as Record<string, unknown> | undefined)
   }
 

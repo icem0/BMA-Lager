@@ -3,7 +3,7 @@ import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { version, commit, branch, buildDate } from '../version'
-import { fuehreSetupDurch, holeSetupStatus, type SetupStatus } from '../auth/users'
+import { fuehreSetupDurch } from '../auth/users'
 import { ApiError } from '../auth/api'
 
 const router = useRouter()
@@ -27,16 +27,35 @@ const setupPasswortBestaetigen = ref('')
 const setupFehler = ref('')
 const setupLaufend = ref(false)
 
+// Mappt den Server-User-State auf den Anzeige-Modus.
+// null = unknown (z. B. offline) → Login-Modus, User koennte noch
+//   per Offline-Fallback reinkommen, Fehlermeldung wird separat gesetzt.
+// true = Server hat User → Login-Modus.
+// false = Server meldet setupRequired → Setup-Modus (sofort sichtbar).
+function modusAusState(state: boolean | null): Modus {
+  return state === false ? 'setup' : 'login'
+}
+
 async function ladeSetupStatus(): Promise<void> {
-  modus.value = 'laden'
-  try {
-    const status: SetupStatus = await holeSetupStatus()
-    modus.value = status.setupRequired ? 'setup' : 'login'
-  } catch (e) {
-    // Server nicht erreichbar o. ä. — Login anbieten, Fehler dem User zeigen.
-    modus.value = 'login'
-    fehler.value = e instanceof Error ? e.message : String(e)
+  // Wenn der State schon bekannt ist (App-Boot-Check in main.ts oder
+  // vorheriger Logout), direkt den Modus ableiten — kein 'laden'-Flash.
+  if (auth.serverHatUser !== null) {
+    modus.value = modusAusState(auth.serverHatUser)
+  } else {
+    modus.value = 'laden'
   }
+
+  // Prueft setup-status via Auth-Store. Bei Netzwerk-Fehler bleibt
+  // serverHatUser auf seinem letzten Wert (typischerweise null) und
+  // wir landen im Login-Modus mit Fehlermeldung — kein Setup-Mode bei
+  // blossem Offline-Status.
+  const result = await auth.pruefeServerUserState()
+  if (result === null) {
+    modus.value = 'login'
+    fehler.value = 'Server nicht erreichbar. Offline-Login mit gecachten Daten möglich.'
+    return
+  }
+  modus.value = modusAusState(result)
 }
 
 onMounted(() => {
