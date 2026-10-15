@@ -27,6 +27,7 @@ export const useSyncStore = defineStore('sync', () => {
     apiBase: string
     getToken: () => string | null
     intervalSek?: number
+    onAuthRevoked?: () => void
   }): void {
     bind()
     startSyncWorker(opts)
