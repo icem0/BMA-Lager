@@ -19,6 +19,7 @@ Regeln für alle Coding-Agents und Entwickler, die an diesem Projekt arbeiten.
 Klar trennen — beides kommt **nicht** zusammen in der DB ab:
 
 - **Konfiguration** (App-weit, ENV, beim Container-Start): `JWT_SECRET`, `CORS_ORIGIN`, `FOTOS_MAX_BYTES`, `RATE_LIMIT_*`, `LOG_LEVEL`, `COOKIE_*`, `DB_*`. Wird vom API-Container aus der `.env` gelesen, lebt nicht in PostgreSQL.
+- **Postgres-Loglevel**: `PG_LOG_LEVEL` in der `.env` (Postgres-GUC `log_min_messages`, Werte `debug5`..`panic`). Wenn leer, wird aus `LOG_LEVEL` gemappt (`trace→debug2`, `debug→debug1`, `info→info`, `warn→warning`, `error→error`); Default ohne beide: `warning`. Bei `debug*/info/notice` aktiviert der `db.command:` in `docker-compose.yml` zusätzlich `log_statement=all` + `log_duration=on` → **jedes** SQL-Statement landet im Log. Nur zum Debuggen setzen, danach wieder auf `warning`/`error` (Log-Flut!).
 - **Einstellungen** (User-/Fach-Präferenzen, änderbar zur Laufzeit, Cross-Device-synchronisiert): `artikelTypen` (global, Admin-only), `sprache` und `standardStandortId` (per-User). Liegen in der `einstellungen`-Tabelle (PK = `(key, user_id)`), LWW auf `geaendert_am`. Die PWA spiegelt sie zusätzlich in IndexedDB (Dexie v5, Compound-Key `[key+userId]`, `userId = ''` als globaler Marker — Domäne arbeitet mit `null`).
 - **Persistenz**: `einstellungen` läuft über das `pgdata`-Volume des API-Containers, nicht über ein eigenes Volume. Backups via `pg_dump`.
 

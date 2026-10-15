@@ -33,6 +33,14 @@ services:
       POSTGRES_DB: ${DB_NAME:-bma}
       POSTGRES_USER: ${DB_USER:-bma}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
+      # Postgres-Loglevel. PG_LOG_LEVEL gewinnt ueber LOG_LEVEL;
+      # ohne beide: warning. Werte: debug5/debug4/debug3/debug2/debug1/debug/
+      # info/notice/warning/error/log/fatal/panic. Bei debug*/info/notice
+      # schaltet das command:-Snippet unten zusaetzlich log_statement=all +
+      # log_duration=on ein (jedes SQL landet im Log -> grosse Log-Flut,
+      # nur zum Debuggen kurzzeitig setzen).
+      PG_LOG_LEVEL: ${PG_LOG_LEVEL-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -43,6 +51,40 @@ services:
     expose:
       - "5432"
     networks: [internal]
+    # Postgres-Log-GUCs in Abhaengigkeit von PG_LOG_LEVEL / LOG_LEVEL setzen.
+    # Mapping trace->debug2, debug->debug1, info->info, warn->warning,
+    # error->error. Bekannte Postgres-GUC-Werte (debug5..panic) werden
+    # unveraendert uebernommen. Default ohne beide: warning.
+    command:
+      - "sh"
+      - "-c"
+      - >-
+        case "$${PG_LOG_LEVEL:-}" in
+          "") MAPPING_LEVEL="$${LOG_LEVEL:-info}" ;;
+          *)  MAPPING_LEVEL="$$PG_LOG_LEVEL" ;;
+        esac &&
+        case "$$MAPPING_LEVEL" in
+          trace) PG_LVL=debug2 ;;
+          debug) PG_LVL=debug1 ;;
+          info)  PG_LVL=info   ;;
+          warning|warn) PG_LVL=warning ;;
+          error|err)   PG_LVL=error   ;;
+          notice|debug5|debug4|debug3|debug2|debug1|info|warning|error|log|fatal|panic)
+                     PG_LVL="$$MAPPING_LEVEL" ;;
+          *) PG_LVL=warning ;;
+        esac &&
+        case "$$PG_LVL" in
+          debug1|debug2|debug3|debug4|debug5|info|notice)
+            exec postgres
+              -c log_min_messages=$$PG_LVL
+              -c log_statement=all
+              -c log_duration=on
+              -c log_parameter_max_length=64
+              ;;
+          *)
+            exec postgres -c log_min_messages=$$PG_LVL
+              ;;
+        esac
 
   api:
     image: ghcr.io/icem0/bma-lager-api:latest
