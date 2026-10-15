@@ -9,6 +9,24 @@ import type { Artikel, Buchung, OutboxEintrag, Standort } from '../../../db/type
 import { jetztIso, neueUuid } from '../../../domain/ids'
 import { getSyncStatus, type TableCounts } from '../worker'
 
+// Top-Level Worker-Modul-State (`_status`, `_consecutiveFailures`, etc.) wird
+// zwischen Tests geteilt. Ohne Reset würden alte Status-Werte in den nächsten
+// Test leaken und Assertions scheitern lassen. Wir holen den Reset-Helper
+// asynchron, weil der Worker erst beim ersten `await import('../worker')`
+// initialisiert wird.
+async function resetWorkerState(): Promise<void> {
+  const mod = await import('../worker')
+  mod._resetSyncForTests()
+}
+
+beforeEach(async () => {
+  // Frische In-Memory-DB pro Test, damit Outbox/Artikel zwischen Tests nicht
+  // leaken. Fake-indexeddb schreibt unter dem übergebenen Namen — jeder neue
+  // Name bekommt eine eigene IDBDatabase.
+  setDb(new BmaLagerDb(`bma-lager-test-${Math.random().toString(36).slice(2)}`))
+  await resetWorkerState()
+})
+
 function artikelAnlage(id: string, titel: string): Artikel {
   const now = jetztIso()
   return {
@@ -86,10 +104,6 @@ async function outboxAdd(
 }
 
 describe('Sync — Outbox-Items', () => {
-  beforeEach(() => {
-    setDb(new BmaLagerDb(`bma-lager-test-${Math.random().toString(36).slice(2)}`))
-  })
-
   it('Artikel landet in der Outbox', async () => {
     const a = artikelAnlage(neueUuid(), 'X')
     await getDb().artikel.add(a)
@@ -159,10 +173,6 @@ describe('Sync — Outbox-Items', () => {
 })
 
 describe('Sync — Snapshot-Merge-Strategie (Last-Writer-Wins)', () => {
-  beforeEach(() => {
-    setDb(new BmaLagerDb(`bma-lager-test-${Math.random().toString(36).slice(2)}`))
-  })
-
   it('Server-Artikel wird in lokale DB übernommen', async () => {
     const a = artikelAnlage(neueUuid(), 'Schraube M8')
     const existing = await getDb().artikel.get(a.id)
@@ -220,10 +230,6 @@ describe('Sync — Snapshot-Merge-Strategie (Last-Writer-Wins)', () => {
 })
 
 describe('Sync — Status & Counts', () => {
-  beforeEach(() => {
-    setDb(new BmaLagerDb(`bma-lager-test-${Math.random().toString(36).slice(2)}`))
-  })
-
   it('SyncStatus hat Felder für Server- und Lokal-Counts', () => {
     const st = getSyncStatus()
     expect(st).toHaveProperty('serverCounts')
@@ -259,10 +265,6 @@ describe('Sync — Status & Counts', () => {
 })
 
 describe('Sync — Push-Markierung (Outbox- vs. Payload-IDs)', () => {
-  beforeEach(() => {
-    setDb(new BmaLagerDb(`bma-lager-test-${Math.random().toString(36).slice(2)}`))
-  })
-
   it('akzeptierte Payload-IDs markieren die richtigen Outbox-Items (Outbox-IDs != Payload-IDs)', async () => {
     // Arrange: zwei Artikel in Outbox mit eigenen Outbox-IDs (≠ Domain-UUID).
     const a1 = artikelAnlage(neueUuid(), 'A1')
@@ -392,6 +394,8 @@ describe('Sync — Backoff & Retry-After', () => {
   })
 
   it('5xx setzt status "origin-unavailable" und plant nextRetryAt anhand Retry-After', async () => {
+    // Outbox-Item anlegen, damit der Push-Handler überhaupt zum Server geht.
+    await outboxAdd('artikel', 'create', artikelAnlage(neueUuid(), 'A1'))
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString()
       if (url.endsWith('/api/sync/push')) {
@@ -408,6 +412,7 @@ describe('Sync — Backoff & Retry-After', () => {
     await runSync({ token: null, apiBase: 'http://test.local' })
 
     const st = getSyncStatus()
+
     expect(st.status).toBe('origin-unavailable')
     expect(st.lastError).toContain('502')
     expect(st.nextRetryAt).not.toBeNull()
@@ -423,8 +428,7 @@ describe('Sync — Backoff & Retry-After', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
 
-    const { runSync, getSyncStatus, _resetSyncForTests } = await import('../worker')
-    _resetSyncForTests()
+    const { runSync, getSyncStatus } = await import('../worker')
 
     await runSync({ token: null, apiBase: 'http://test.local' })
     let nextMs = Date.parse(getSyncStatus().nextRetryAt!) - Date.now()
@@ -440,7 +444,6 @@ describe('Sync — Backoff & Retry-After', () => {
 
 describe('Sync — Diagnose (lastFailure)', () => {
   it('5xx füllt lastFailure mit status, code, source und retryAfterMs', async () => {
-    setDb(new BmaLagerDb(`bma-lager-test-${Math.random().toString(36).slice(2)}`))
     // Outbox-Item anlegen, damit der Push-Handler überhaupt zum Server geht.
     await outboxAdd('artikel', 'create', artikelAnlage(neueUuid(), 'A1'))
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
@@ -455,8 +458,7 @@ describe('Sync — Diagnose (lastFailure)', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
 
-    const { runSync, getSyncStatus, _resetSyncForTests } = await import('../worker')
-    _resetSyncForTests()
+    const { runSync, getSyncStatus } = await import('../worker')
     await runSync({ token: null, apiBase: 'http://test.local' })
 
     const st = getSyncStatus()
@@ -469,14 +471,12 @@ describe('Sync — Diagnose (lastFailure)', () => {
   })
 
   it('Netzwerk-Fehler markiert lastFailure mit source=network', async () => {
-    setDb(new BmaLagerDb(`bma-lager-test-${Math.random().toString(36).slice(2)}`))
     const fetchMock = vi.fn(async () => {
       throw new TypeError('Failed to fetch')
     })
     vi.stubGlobal('fetch', fetchMock)
 
-    const { runSync, getSyncStatus, _resetSyncForTests } = await import('../worker')
-    _resetSyncForTests()
+    const { runSync, getSyncStatus } = await import('../worker')
     await runSync({ token: null, apiBase: 'http://test.local' })
 
     const st = getSyncStatus()
@@ -487,7 +487,6 @@ describe('Sync — Diagnose (lastFailure)', () => {
   })
 
   it('Server-Rejects füllen lastFailure mit sampleErrors + rejectedItems', async () => {
-    setDb(new BmaLagerDb(`bma-lager-test-${Math.random().toString(36).slice(2)}`))
     const a1 = artikelAnlage(neueUuid(), 'A1')
     const a2 = artikelAnlage(neueUuid(), 'A2')
     await outboxAdd('artikel', 'create', a1)
@@ -535,8 +534,7 @@ describe('Sync — Diagnose (lastFailure)', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
 
-    const { runSync, getSyncStatus, _resetSyncForTests } = await import('../worker')
-    _resetSyncForTests()
+    const { runSync, getSyncStatus } = await import('../worker')
     await runSync({ token: null, apiBase: 'http://test.local' })
 
     const st = getSyncStatus()
@@ -550,7 +548,6 @@ describe('Sync — Diagnose (lastFailure)', () => {
   })
 
   it('Erfolgreicher Sync setzt lastFailure zurück auf null', async () => {
-    setDb(new BmaLagerDb(`bma-lager-test-${Math.random().toString(36).slice(2)}`))
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString()
       if (url.includes('/api/sync/snapshot')) {
@@ -580,8 +577,7 @@ describe('Sync — Diagnose (lastFailure)', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
 
-    const { runSync, getSyncStatus, _resetSyncForTests } = await import('../worker')
-    _resetSyncForTests()
+    const { runSync, getSyncStatus } = await import('../worker')
     await runSync({ token: null, apiBase: 'http://test.local' })
 
     expect(getSyncStatus().lastFailure).toBeNull()
@@ -591,7 +587,6 @@ describe('Sync — Diagnose (lastFailure)', () => {
 
 describe('Sync — 401 / Auth-Reset', () => {
   it('401 resettet Outbox-Items (attempts=0, lastError=null) und ruft onAuthRevoked genau einmal', async () => {
-    setDb(new BmaLagerDb(`bma-lager-test-${Math.random().toString(36).slice(2)}`))
     const a1 = artikelAnlage(neueUuid(), 'A1')
     await outboxAdd('artikel', 'create', a1)
     // Vorschaden: ein Item mit hohem attempts-Wert simulieren
@@ -614,9 +609,7 @@ describe('Sync — 401 / Auth-Reset', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     const onAuthRevoked = vi.fn()
-    const { runSync, startSyncWorker, stopSyncWorker, _resetSyncForTests } =
-      await import('../worker')
-    _resetSyncForTests()
+    const { runSync, startSyncWorker, stopSyncWorker } = await import('../worker')
     startSyncWorker({
       apiBase: 'http://test.local',
       getToken: () => 'tot',
@@ -643,7 +636,6 @@ describe('Sync — 401 / Auth-Reset', () => {
   })
 
   it('Erfolgreicher Push nach Auth-Reset löst das Latch (Callback kann erneut feuern)', async () => {
-    setDb(new BmaLagerDb(`bma-lager-test-${Math.random().toString(36).slice(2)}`))
     const a1 = artikelAnlage(neueUuid(), 'A1')
     await outboxAdd('artikel', 'create', a1)
 
@@ -700,9 +692,7 @@ describe('Sync — 401 / Auth-Reset', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     const onAuthRevoked = vi.fn()
-    const { runSync, startSyncWorker, stopSyncWorker, _resetSyncForTests } =
-      await import('../worker')
-    _resetSyncForTests()
+    const { runSync, startSyncWorker, stopSyncWorker } = await import('../worker')
     startSyncWorker({
       apiBase: 'http://test.local',
       getToken: () => 'tot',
