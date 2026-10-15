@@ -150,4 +150,35 @@ export default {
       optional: '(optional)',
     },
   },
+  auth: {
+    error: {
+      emailRequired: 'Bitte eine E-Mail eingeben.',
+      passwordRequired: 'Bitte ein Passwort eingeben.',
+      credentialsRequired: 'Bitte E-Mail und Passwort eingeben.',
+      // Server antwortet nicht (Netzwerk, DNS, CORS, 5xx ohne Body).
+      // Konkrete Browser-/Proxy-Fehlermeldungen wie "Failed to fetch"
+      // oder "getaddrinfo ENOTFOUND db" werden hier zusammengefasst.
+      serverUnreachable: 'Server nicht erreichbar. Bitte Internet- oder VPN-Verbindung prüfen.',
+      // Offline-Login mit gecachten Credentials gescheitert:
+      // kein Cache-Eintrag fuer diese E-Mail oder das Passwort stimmt
+      // nicht mit dem gecachten Hash ueberein.
+      offlineNoCache: 'Offline-Login nicht möglich: kein gecachter Eintrag oder falsches Passwort.',
+      // Inkonsistenz: Passwort wurde verifiziert, aber der Credential-
+      // Eintrag ist zwischenzeitlich verschwunden (localStorage geloescht).
+      cacheLost: 'Interner Fehler: Credential-Cache verloren.',
+      // Passwort OK, aber kein JWT mehr im Cache (erster Login war nie online).
+      jwtMissing:
+        'Offline-Login möglich, aber kein gespeichertes Token. Bitte zuerst online anmelden.',
+      // JWT ist abgelaufen und der Server ist nicht erreichbar.
+      jwtExpired: 'Sitzung abgelaufen. Bitte online anmelden, um einen neuen Token zu erhalten.',
+      // Generischer Netzwerkfehler bei einem anderen Auth-Aufruf
+      // (z. B. Passwort aendern). Rohmeldungen des Browsers werden hier
+      // nicht durchgereicht.
+      network: 'Server nicht erreichbar. Bitte Internet- oder VPN-Verbindung prüfen.',
+      // Status-Check beim LoginView-Mount: Server nicht erreichbar,
+      // Offline-Login mit gecachten Daten wird versucht.
+      serverUnreachableHint:
+        'Server nicht erreichbar. Du kannst dich mit gecachten Daten anmelden, wenn du hier schon einmal online angemeldet warst.',
+    },
+  },
 }

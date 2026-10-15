@@ -1,13 +1,16 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { version, commit, branch, buildDate } from '../version'
 import { fuehreSetupDurch } from '../auth/users'
 import { ApiError } from '../auth/api'
+import { authFehlerText } from '../auth/messages'
 
 const router = useRouter()
 const auth = useAuthStore()
+const { t } = useI18n()
 
 type Modus = 'laden' | 'setup' | 'login'
 
@@ -52,7 +55,7 @@ async function ladeSetupStatus(): Promise<void> {
   const result = await auth.pruefeServerUserState()
   if (result === null) {
     modus.value = 'login'
-    fehler.value = 'Server nicht erreichbar. Offline-Login mit gecachten Daten möglich.'
+    fehler.value = t('auth.error.serverUnreachableHint')
     return
   }
   modus.value = modusAusState(result)
@@ -65,7 +68,7 @@ onMounted(() => {
 async function anmelden(): Promise<void> {
   fehler.value = ''
   if (!email.value.trim() || !passwort.value) {
-    fehler.value = 'Bitte E-Mail und Passwort eingeben.'
+    fehler.value = t('auth.error.credentialsRequired')
     return
   }
   laufend.value = true
@@ -77,7 +80,15 @@ async function anmelden(): Promise<void> {
       void router.push('/')
     }
   } catch (e) {
-    fehler.value = e instanceof Error ? e.message : String(e)
+    // AuthError wird via authFehlerText in die aktive Locale uebersetzt.
+    // Fuer den Sonderfall ApiError (nur direkt vom Server, z. B. wenn der
+    // Auth-Store noch nicht angepasst ist) greifen wir auf die Server-
+    // Message zurueck — sie ist i. d. R. bereits deutsch und lesbar.
+    if (e instanceof ApiError) {
+      fehler.value = e.message || t('auth.error.serverUnreachable')
+    } else {
+      fehler.value = authFehlerText(e)
+    }
   } finally {
     laufend.value = false
   }
@@ -87,11 +98,11 @@ async function setupAbschliessen(): Promise<void> {
   setupFehler.value = ''
 
   if (!setupAnzeigename.value.trim()) {
-    setupFehler.value = 'Bitte einen Anzeigenamen eingeben.'
+    setupFehler.value = t('view.settings.benutzer') + ' erforderlich'
     return
   }
   if (!setupEmail.value.trim()) {
-    setupFehler.value = 'Bitte eine E-Mail eingeben.'
+    setupFehler.value = t('auth.error.emailRequired')
     return
   }
   if (setupPasswort.value.length < 8) {
@@ -121,7 +132,7 @@ async function setupAbschliessen(): Promise<void> {
       email.value = setupEmail.value.trim()
       return
     }
-    setupFehler.value = e instanceof Error ? e.message : String(e)
+    setupFehler.value = authFehlerText(e)
   } finally {
     setupLaufend.value = false
   }

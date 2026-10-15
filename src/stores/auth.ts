@@ -11,6 +11,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { ApiError, apiFetch, setGlobalToken, setOn401Handler } from '../auth/api'
+import { AuthError } from '../auth/errors'
 import {
   credLesen,
   credSchreiben,
@@ -83,8 +84,12 @@ export const useAuthStore = defineStore('auth', () => {
     opts: LoginOptions = {},
   ): Promise<void> {
     const trimmedEmail = emailInput.trim().toLowerCase()
-    if (!trimmedEmail) throw new Error('E-Mail erforderlich')
-    if (!passwort) throw new Error('Passwort erforderlich')
+    if (!trimmedEmail) {
+      throw new AuthError('auth.email.required', 'E-Mail erforderlich')
+    }
+    if (!passwort) {
+      throw new AuthError('auth.password.required', 'Passwort erforderlich')
+    }
 
     let serverAntwort: LoginAntwort | null = null
     let netzwerkFehler: unknown = null
@@ -96,9 +101,15 @@ export const useAuthStore = defineStore('auth', () => {
       })
     } catch (e) {
       // Wenn Server sagt "401", ist das ein echter Auth-Fehler — kein Netzwerkproblem.
-      // Wir unterscheiden über ApiError vs. TypeError (fetch-Failure).
+      // Wir unterscheiden über ApiError vs. sonstiges (fetch-Failure, DNS-Fehler,
+      // CORS, etc.). Letzteres ist "Server nicht erreichbar" — egal welcher konkrete
+      // Grund (z. B. "getaddrinfo ENOTFOUND db" aus dem Reverse-Proxy / Dev-Stack).
       if (e instanceof ApiError) {
-        throw new Error(e.message)
+        // Server hat geantwortet, aber mit Auth-Fehler. Wir geben die
+        // Server-Message 1:1 weiter, damit z. B. "falsches Passwort"
+        // oder "Account deaktiviert" in der vom Server gelieferten Sprache
+        // erscheint (Server liefert DE).
+        throw new AuthError('auth.unknown', e.message)
       }
       netzwerkFehler = e
     }
@@ -139,24 +150,36 @@ export const useAuthStore = defineStore('auth', () => {
 
     // ---------- Offline-Fallback ----------
     if (!opts.offlineFallback) {
-      throw new Error('Server nicht erreichbar. Bitte Internetverbindung prüfen.')
+      throw new AuthError(
+        'auth.server.unreachable',
+        'Server nicht erreichbar. Bitte Internetverbindung prüfen.',
+      )
     }
     const ok = await offlineLoginMoeglich(trimmedEmail, passwort)
     if (!ok) {
-      throw new Error('Offline-Login nicht möglich: kein gecachter Eintrag oder falsches Passwort.')
+      throw new AuthError(
+        'auth.offline.no_cache',
+        'Offline-Login nicht möglich: kein gecachter Eintrag oder falsches Passwort.',
+      )
     }
     // Wir haben das Passwort verifiziert. JWT ist aber möglicherweise abgelaufen.
     const cached = credLesen(trimmedEmail)
-    if (!cached) throw new Error('Interner Fehler: Credential-Cache verloren.')
+    if (!cached) {
+      throw new AuthError('auth.cache.lost', 'Interner Fehler: Credential-Cache verloren.')
+    }
     const jwt = jwtLesen()
     if (!jwt) {
-      throw new Error(
+      throw new AuthError(
+        'auth.jwt.missing',
         'Offline-Login möglich, aber kein JWT mehr im Cache. Bitte zuerst online anmelden.',
       )
     }
     const expires = parseJwtExpiry(jwt)
     if (expires && expires.getTime() < Date.now()) {
-      throw new Error('JWT abgelaufen. Bitte online anmelden, um neuen Token zu erhalten.')
+      throw new AuthError(
+        'auth.jwt.expired',
+        'JWT abgelaufen. Bitte online anmelden, um neuen Token zu erhalten.',
+      )
     }
     // Rekonstruieren der Session aus JWT (wir vertrauen hier dem JWT, weil wir
     // gerade erfolgreich das Passwort verifiziert haben — das ist sicherer als
@@ -202,8 +225,22 @@ export const useAuthStore = defineStore('auth', () => {
     altesPasswort: string,
     neuesPasswort: string,
   ): Promise<void> {
-    if (!session.value) throw new Error('nicht angemeldet')
-    await aendereEigenesPasswortServer(altesPasswort, neuesPasswort)
+    if (!session.value) {
+      throw new AuthError('auth.unknown', 'nicht angemeldet')
+    }
+    try {
+      await aendereEigenesPasswortServer(altesPasswort, neuesPasswort)
+    } catch (e) {
+      if (e instanceof ApiError) {
+        throw new AuthError('auth.unknown', e.message)
+      }
+      // Netzwerk-/Server-Fehler: rohe Browsermeldung (z. B. "Failed to fetch")
+      // NICHT durchreichen — die View uebersetzt den Code.
+      throw new AuthError(
+        'auth.network',
+        'Server nicht erreichbar. Bitte Internetverbindung prüfen.',
+      )
+    }
     // Lokal: mustChangePassword-Flag entfernen, neue Credentials hashen
     if (session.value) {
       sessionSchreiben({ ...session.value, mustChangePassword: false })

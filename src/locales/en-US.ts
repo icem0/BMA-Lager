@@ -150,4 +150,33 @@ export default {
       optional: '(optional)',
     },
   },
+  auth: {
+    error: {
+      emailRequired: 'Please enter your email address.',
+      passwordRequired: 'Please enter your password.',
+      credentialsRequired: 'Please enter email and password.',
+      // Server did not respond (network, DNS, CORS, 5xx without body).
+      // Concrete browser / proxy messages like "Failed to fetch"
+      // or "getaddrinfo ENOTFOUND db" are summarised here.
+      serverUnreachable: 'Server unreachable. Please check your internet or VPN connection.',
+      // Offline login with cached credentials failed:
+      // no cache entry for this email, or the password does not match
+      // the cached hash.
+      offlineNoCache: 'Offline login not possible: no cached entry or wrong password.',
+      // Inconsistency: password verified, but the credential entry is
+      // gone (localStorage was cleared).
+      cacheLost: 'Internal error: credential cache lost.',
+      // Password is fine, but no JWT in the cache (first login was never online).
+      jwtMissing: 'Offline login is possible, but no saved token. Please sign in online first.',
+      // JWT has expired and the server is not reachable.
+      jwtExpired: 'Session expired. Please sign in online to obtain a new token.',
+      // Generic network error on another auth call (e.g. change password).
+      // Raw browser messages are not forwarded.
+      network: 'Server unreachable. Please check your internet or VPN connection.',
+      // Status check during LoginView mount: server unreachable,
+      // offline login with cached credentials will be tried.
+      serverUnreachableHint:
+        'Server unreachable. You can sign in with cached data if you have previously signed in online here.',
+    },
+  },
 }

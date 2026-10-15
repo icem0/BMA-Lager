@@ -2,6 +2,7 @@
 import { ref, computed } from 'vue'
 import { useRouter, RouterLink } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
+import { authFehlerText } from '../auth/messages'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -25,7 +26,10 @@ async function speichern(): Promise<void> {
     await auth.aendereEigenesPasswortMit(altes.value, neues.value)
     void router.push('/')
   } catch (e) {
-    fehler.value = e instanceof Error ? e.message : String(e)
+    // AuthError wird ueber authFehlerText lokalisiert; ein roher
+    // Fetch-/DNS-Fehler wird auf den generischen Netzwerktext gemappt,
+    // statt "Failed to fetch" o. ae. an den User durchzureichen.
+    fehler.value = authFehlerText(e)
   } finally {
     laufend.value = false
   }
