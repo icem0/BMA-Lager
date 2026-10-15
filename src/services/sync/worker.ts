@@ -140,6 +140,39 @@ export interface ServerStatus {
   counts: TableCounts
 }
 
+/** Wo der letzte Server-Fehler aufgetreten ist. */
+export type SyncFailureSource = 'push' | 'snapshot' | 'status' | 'network' | null
+
+/** Strukturierte Diagnose-Info für den letzten Fehler. */
+export interface SyncLastFailure {
+  /** Wann der Fehler aufgetreten ist (ISO). */
+  at: string
+  /** Welcher Sync-Schritt hat versagt. */
+  source: SyncFailureSource
+  /** HTTP-Status, falls zutreffend. */
+  status: number | null
+  /** Kurzer Code aus der Server-Antwort (z. B. "VALIDATION", "NEGATIVE_BESTAND"). */
+  code: string | null
+  /** Menschenlesbare Message. */
+  message: string
+  /** Vom Server gesetztes Retry-After (ms), falls vorhanden. */
+  retryAfterMs: number | null
+  /** Anzahl Outbox-Items, die im letzten Push abgelehnt wurden (errors+conflicts). */
+  rejectedItems: number
+  /** Erste paar Beispiele aus `result.errors` für Diagnose. */
+  sampleErrors: Array<{ id: string; code: string; message: string }>
+  /** Erste paar Outbox-Items mit lastError (sichtbar in der UI). */
+  stuckItems: Array<{
+    outboxId: string
+    entity: string
+    op: string
+    payloadId: string
+    attempts: number
+    lastError: string | null
+    createdAt: string
+  }>
+}
+
 export interface SyncStatus {
   status: 'idle' | 'syncing' | 'offline' | 'error' | 'origin-unavailable'
   pending: number
@@ -153,6 +186,8 @@ export interface SyncStatus {
   serverTime: string | null
   /** Wann der nächste Sync-Versuch starten soll (ISO). `null` = sofort erlaubt. */
   nextRetryAt: string | null
+  /** Strukturierte Diagnose-Info für den letzten Fehler (oder `null`). */
+  lastFailure: SyncLastFailure | null
 }
 
 const LISTENERS = new Set<(s: SyncStatus) => void>()
@@ -165,6 +200,7 @@ let _status: SyncStatus = {
   localCounts: null,
   serverTime: null,
   nextRetryAt: null,
+  lastFailure: null,
 }
 let _intervalHandle: ReturnType<typeof setInterval> | null = null
 let _running = false
@@ -289,6 +325,35 @@ async function markFailed(id: string, error: string): Promise<void> {
   })
 }
 
+/**
+ * Liest die ersten N Outbox-Items mit lastError, die noch nicht synced sind.
+ * Dient als Diagnose für die UI: "Was genau hängt?".
+ */
+async function collectStuckItems(limit = 5): Promise<SyncLastFailure['stuckItems']> {
+  const all = await getDb().outbox.orderBy('createdAt').toArray()
+  const stuck = all.filter((o) => o.syncedAt === null && o.lastError)
+  const out: SyncLastFailure['stuckItems'] = []
+  for (const o of stuck.slice(0, limit)) {
+    let payloadId = ''
+    try {
+      const parsed = JSON.parse(o.payload) as { id?: unknown }
+      payloadId = typeof parsed.id === 'string' ? parsed.id : ''
+    } catch {
+      // korrupte payload — Diagnose zeigt leere ID
+    }
+    out.push({
+      outboxId: o.id,
+      entity: o.entity,
+      op: o.op,
+      payloadId,
+      attempts: o.attempts,
+      lastError: o.lastError,
+      createdAt: o.createdAt,
+    })
+  }
+  return out
+}
+
 // ---------- Snapshot-Merge ----------
 
 async function applySnapshot(snap: SyncSnapshot): Promise<void> {
@@ -379,6 +444,15 @@ export async function runSync(opts: { token: string | null; apiBase: string }): 
           const acceptedIds = new Set(result.accepted)
           const conflictsById = new Map(result.conflicts.map((c) => [c.id, c.reason]))
           const errorsById = new Map(result.errors.map((e) => [e.id, `${e.code}: ${e.message}`]))
+          // Diagnose: sammle die ersten paar Server-Fehler, damit die UI
+          // zeigen kann, WARUM der Server das Item abgelehnt hat.
+          const sampleErrors: SyncLastFailure['sampleErrors'] = result.errors
+            .slice(0, 3)
+            .map((e) => ({ id: e.id, code: e.code, message: e.message }))
+          const lastPushDiagnosis: Pick<SyncLastFailure, 'rejectedItems' | 'sampleErrors'> = {
+            rejectedItems: result.conflicts.length + result.errors.length,
+            sampleErrors,
+          }
           for (const it of items) {
             if (acceptedIds.has(it.payloadId)) {
               await markSynced(it.outboxId)
@@ -391,10 +465,44 @@ export async function runSync(opts: { token: string | null; apiBase: string }): 
             // erwähnt, lassen wir es unangetastet — kein Hinweis auf Erfolg oder
             // Misserfolg, also besser nicht voreilig markieren.
           }
+          // Wenn der Server einige Items abgelehnt hat, aber der Push insgesamt
+          // 200 war, ist das ein "partieller Erfolg". Das ist KEIN fataler
+          // Fehler — der Worker läuft normal weiter. Wir hängen die Diagnose
+          // aber an den Status, damit die UI sie sehen kann.
+          if (lastPushDiagnosis.rejectedItems > 0) {
+            updateStatus({
+              lastError: `Server hat ${lastPushDiagnosis.rejectedItems} von ${items.length} Items abgelehnt`,
+              lastFailure: {
+                at: jetztIso(),
+                source: 'push',
+                status: 200,
+                code: 'PARTIAL_REJECTED',
+                message: `Server hat ${lastPushDiagnosis.rejectedItems} von ${items.length} Items abgelehnt`,
+                retryAfterMs: null,
+                ...lastPushDiagnosis,
+                stuckItems: await collectStuckItems(5),
+              },
+            })
+          }
         } catch (e) {
-          // Gesamter Push fehlgeschlagen (z. B. Netzwerk). Alle markieren.
+          // Gesamter Push fehlgeschlagen (z. B. Netzwerk oder HTTP-Fehler).
+          const http = e instanceof SyncHttpError ? e : null
           const msg = e instanceof Error ? e.message : String(e)
           for (const it of items) await markFailed(it.outboxId, msg)
+          updateStatus({
+            lastError: msg,
+            lastFailure: {
+              at: jetztIso(),
+              source: http ? 'push' : 'network',
+              status: http?.status ?? null,
+              code: http?.category ?? 'NETWORK',
+              message: msg,
+              retryAfterMs: http?.retryAfterMs ?? null,
+              rejectedItems: 0,
+              sampleErrors: [],
+              stuckItems: await collectStuckItems(5),
+            },
+          })
           throw e
         }
       }
@@ -420,7 +528,11 @@ export async function runSync(opts: { token: string | null; apiBase: string }): 
     updateStatus({
       status: 'idle',
       lastSyncAt: jetztIso(),
-      lastError: null,
+      // lastError/lastFailure nur zurücksetzen, wenn nicht partiell
+      // abgelehnt wurde (das Push-Handler-Update setzt eine Diagnose,
+      // die wir hier nicht überschreiben wollen).
+      lastError: _status.lastFailure?.code === 'PARTIAL_REJECTED' ? _status.lastError : null,
+      lastFailure: _status.lastFailure?.code === 'PARTIAL_REJECTED' ? _status.lastFailure : null,
       pending: await pendingCount(),
       serverCounts,
       serverTime,
@@ -446,6 +558,22 @@ export async function runSync(opts: { token: string | null; apiBase: string }): 
     const waitMs = http?.retryAfterMs ?? backoffMs
     const nextRetryAt = waitMs > 0 ? new Date(Date.now() + waitMs).toISOString() : null
 
+    // Diagnose: nur setzen, wenn der innere Push-Handler es nicht schon getan
+    // hat (partieller Erfolg mit Server-Rejects). Sonst überschreiben wir
+    // dessen Source/Code mit der hier beobachteten Information.
+    const existingFailure = _status.lastFailure
+    const newFailure: SyncLastFailure = {
+      at: jetztIso(),
+      source: existingFailure?.source ?? (isNetwork ? 'network' : 'snapshot'),
+      status: http?.status ?? null,
+      code: http?.category ?? (isNetwork ? 'NETWORK' : 'UNKNOWN'),
+      message: msg,
+      retryAfterMs: http?.retryAfterMs ?? null,
+      rejectedItems: existingFailure?.rejectedItems ?? 0,
+      sampleErrors: existingFailure?.sampleErrors ?? [],
+      stuckItems: await collectStuckItems(5),
+    }
+
     if (isNetwork) {
       updateStatus({
         status: 'offline',
@@ -453,6 +581,7 @@ export async function runSync(opts: { token: string | null; apiBase: string }): 
         pending: await pendingCount(),
         localCounts,
         nextRetryAt,
+        lastFailure: newFailure,
       })
     } else if (http?.category === 'origin-unavailable') {
       // 5xx: Server/Origin ist down — kein Punkt, alle 30s zu hämmern.
@@ -462,6 +591,7 @@ export async function runSync(opts: { token: string | null; apiBase: string }): 
         pending: await pendingCount(),
         localCounts,
         nextRetryAt,
+        lastFailure: newFailure,
       })
     } else if (http?.category === 'auth') {
       // Token abgelaufen o. ä. — User muss sich neu einloggen.
@@ -471,6 +601,7 @@ export async function runSync(opts: { token: string | null; apiBase: string }): 
         pending: await pendingCount(),
         localCounts,
         nextRetryAt,
+        lastFailure: newFailure,
       })
     } else {
       updateStatus({
@@ -479,6 +610,7 @@ export async function runSync(opts: { token: string | null; apiBase: string }): 
         pending: await pendingCount(),
         localCounts,
         nextRetryAt,
+        lastFailure: newFailure,
       })
     }
   } finally {
@@ -618,6 +750,7 @@ export function _resetSyncForTests(): void {
     localCounts: null,
     serverTime: null,
     nextRetryAt: null,
+    lastFailure: null,
   }
   _consecutiveFailures = 0
   if (_intervalHandle) {

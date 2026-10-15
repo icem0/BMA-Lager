@@ -313,6 +313,32 @@ function formatIso(iso: string | null): string {
   return d.toLocaleString()
 }
 
+function sourceLabel(source: string): string {
+  switch (source) {
+    case 'push':
+      return 'Push (Outbox → Server)'
+    case 'snapshot':
+      return 'Pull (Snapshot laden)'
+    case 'status':
+      return 'Status (Server-Counts)'
+    case 'network':
+      return 'Netzwerk'
+    default:
+      return source
+  }
+}
+
+function hasStuckItems(
+  failure:
+    | {
+        stuckItems: Array<unknown>
+      }
+    | null
+    | undefined,
+): boolean {
+  return !!failure && failure.stuckItems.length > 0
+}
+
 function formatRelativ(iso: string | null): string {
   if (!iso) return 'nie'
   const ms = Date.now() - new Date(iso).getTime()
@@ -561,6 +587,64 @@ function formatRelativ(iso: string | null): string {
           <dd class="wert-fehler">{{ sync.status.lastError }}</dd>
         </div>
       </dl>
+
+      <div v-if="sync.status.lastFailure" class="sync-diag-block wert-fehler" role="alert">
+        <strong>Diagnose</strong>
+        <dl class="sync-diag">
+          <template v-if="sync.status.lastFailure.source">
+            <dt>Schritt</dt>
+            <dd>{{ sourceLabel(sync.status.lastFailure.source) }}</dd>
+          </template>
+          <template v-if="sync.status.lastFailure.status !== null">
+            <dt>HTTP</dt>
+            <dd>{{ sync.status.lastFailure.status }}</dd>
+          </template>
+          <template v-if="sync.status.lastFailure.code">
+            <dt>Code</dt>
+            <dd>{{ sync.status.lastFailure.code }}</dd>
+          </template>
+          <template v-if="sync.status.lastFailure.retryAfterMs">
+            <dt>Retry-After</dt>
+            <dd>{{ Math.round(sync.status.lastFailure.retryAfterMs / 1000) }}s</dd>
+          </template>
+          <template v-if="sync.status.lastFailure.rejectedItems > 0">
+            <dt>Abgelehnt</dt>
+            <dd>
+              {{ sync.status.lastFailure.rejectedItems }} von
+              {{ sync.status.pending + sync.status.lastFailure.rejectedItems }}
+            </dd>
+          </template>
+          <template v-if="sync.status.nextRetryAt">
+            <dt>Nächster Versuch</dt>
+            <dd>{{ formatIso(sync.status.nextRetryAt) }}</dd>
+          </template>
+        </dl>
+        <details v-if="hasStuckItems(sync.status.lastFailure)" class="sync-diag-details">
+          <summary>
+            Hängende Items ({{ sync.status.lastFailure!.stuckItems.length }} angezeigt)
+          </summary>
+          <ul class="sync-diag-list">
+            <li v-for="it in sync.status.lastFailure!.stuckItems" :key="it.outboxId">
+              <code class="mono">{{ it.entity }}/{{ it.op }}</code>
+              <span class="muted"> {{ it.payloadId.slice(0, 8) }}… </span>
+              <span class="wert-warn"> Versuch {{ it.attempts }}: {{ it.lastError }} </span>
+            </li>
+          </ul>
+        </details>
+        <details
+          v-if="sync.status.lastFailure && sync.status.lastFailure.sampleErrors.length > 0"
+          class="sync-diag-details"
+        >
+          <summary>Server-Antwort (Beispiele, max. 3)</summary>
+          <ul class="sync-diag-list">
+            <li v-for="(e, idx) in sync.status.lastFailure.sampleErrors" :key="idx">
+              <code class="mono">{{ e.code }}</code>
+              <span>{{ e.message }}</span>
+              <span class="muted"> {{ e.id.slice(0, 8) }}… </span>
+            </li>
+          </ul>
+        </details>
+      </div>
 
       <h3>Datensätze</h3>
       <table class="sync-counts">
@@ -1051,6 +1135,70 @@ function formatRelativ(iso: string | null): string {
   color: var(--text-muted);
 }
 .sync-counts td {
+  font-family: var(--mono);
+}
+
+.sync-diag {
+  margin: 0.35rem 0 0 0;
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.15rem 0.6rem;
+  font-size: 0.82rem;
+}
+.sync-diag-block {
+  margin-top: 0.6rem;
+  padding: 0.5rem 0.6rem;
+  background: rgba(248, 113, 113, 0.08);
+  border-left: 3px solid var(--danger);
+  border-radius: 0.25rem;
+  font-size: 0.85rem;
+}
+.sync-diag-block strong {
+  display: block;
+  margin-bottom: 0.25rem;
+}
+.sync-diag dt {
+  color: var(--text-muted);
+}
+.sync-diag dd {
+  margin: 0;
+  font-family: var(--mono);
+}
+.sync-diag-details {
+  margin-top: 0.4rem;
+  font-size: 0.82rem;
+}
+.sync-diag-details summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  user-select: none;
+}
+.sync-diag-list {
+  list-style: none;
+  margin: 0.35rem 0 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.sync-diag-list li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: baseline;
+  font-size: 0.8rem;
+}
+.sync-diag-list .mono {
+  font-family: var(--mono);
+  background: rgba(255, 255, 255, 0.05);
+  padding: 0 0.3rem;
+  border-radius: 0.2rem;
+}
+.sync-diag-list .muted {
+  color: var(--text-muted);
+}
+.sync-diag-list .wert-warn {
+  color: var(--text-strong);
   font-family: var(--mono);
 }
 

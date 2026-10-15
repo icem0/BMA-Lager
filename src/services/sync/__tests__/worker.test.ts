@@ -437,6 +437,155 @@ describe('Sync — Backoff & Retry-After', () => {
   })
 })
 
+describe('Sync — Diagnose (lastFailure)', () => {
+  it('5xx füllt lastFailure mit status, code, source und retryAfterMs', async () => {
+    setDb(new BmaLagerDb(`bma-lager-test-${Math.random().toString(36).slice(2)}`))
+    // Outbox-Item anlegen, damit der Push-Handler überhaupt zum Server geht.
+    await outboxAdd('artikel', 'create', artikelAnlage(neueUuid(), 'A1'))
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url.endsWith('/api/sync/push')) {
+        return new Response('Bad Gateway', {
+          status: 502,
+          headers: { 'Retry-After': '30' },
+        })
+      }
+      return new Response('not found', { status: 404 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { runSync, getSyncStatus, _resetSyncForTests } = await import('../worker')
+    _resetSyncForTests()
+    await runSync({ token: null, apiBase: 'http://test.local' })
+
+    const st = getSyncStatus()
+    expect(st.lastFailure).not.toBeNull()
+    expect(st.lastFailure?.source).toBe('push')
+    expect(st.lastFailure?.status).toBe(502)
+    expect(st.lastFailure?.code).toBe('origin-unavailable')
+    expect(st.lastFailure?.retryAfterMs).toBe(30_000)
+    expect(st.lastFailure?.message).toContain('502')
+  })
+
+  it('Netzwerk-Fehler markiert lastFailure mit source=network', async () => {
+    setDb(new BmaLagerDb(`bma-lager-test-${Math.random().toString(36).slice(2)}`))
+    const fetchMock = vi.fn(async () => {
+      throw new TypeError('Failed to fetch')
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { runSync, getSyncStatus, _resetSyncForTests } = await import('../worker')
+    _resetSyncForTests()
+    await runSync({ token: null, apiBase: 'http://test.local' })
+
+    const st = getSyncStatus()
+    expect(st.lastFailure).not.toBeNull()
+    expect(st.lastFailure?.source).toBe('network')
+    expect(st.lastFailure?.status).toBeNull()
+    expect(st.lastFailure?.code).toBe('NETWORK')
+  })
+
+  it('Server-Rejects füllen lastFailure mit sampleErrors + rejectedItems', async () => {
+    setDb(new BmaLagerDb(`bma-lager-test-${Math.random().toString(36).slice(2)}`))
+    const a1 = artikelAnlage(neueUuid(), 'A1')
+    const a2 = artikelAnlage(neueUuid(), 'A2')
+    await outboxAdd('artikel', 'create', a1)
+    await outboxAdd('artikel', 'create', a2)
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url.endsWith('/api/sync/push') && init?.method === 'POST') {
+        return new Response(
+          JSON.stringify({
+            accepted: [],
+            conflicts: [],
+            errors: [
+              { id: a1.id, code: 'NEGATIVE_BESTAND', message: 'aktuell 0, angefordert 5' },
+              { id: a2.id, code: 'UNBEKANNTE_REFERENZ', message: 'artikel unbekannt' },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      if (url.includes('/api/sync/snapshot')) {
+        return new Response(
+          JSON.stringify({
+            serverTime: new Date().toISOString(),
+            since: '1970-01-01T00:00:00.000Z',
+            artikel: [],
+            standorte: [],
+            projekte: [],
+            buchungen: [],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      if (url.endsWith('/api/sync/status')) {
+        return new Response(
+          JSON.stringify({
+            serverTime: new Date().toISOString(),
+            counts: { artikel: 0, standorte: 0, projekte: 0, buchungen: 0 },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      return new Response('not found', { status: 404 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { runSync, getSyncStatus, _resetSyncForTests } = await import('../worker')
+    _resetSyncForTests()
+    await runSync({ token: null, apiBase: 'http://test.local' })
+
+    const st = getSyncStatus()
+    expect(st.lastFailure).not.toBeNull()
+    expect(st.lastFailure?.source).toBe('push')
+    expect(st.lastFailure?.code).toBe('PARTIAL_REJECTED')
+    expect(st.lastFailure?.rejectedItems).toBe(2)
+    expect(st.lastFailure?.sampleErrors.length).toBe(2)
+    expect(st.lastFailure?.sampleErrors[0]?.code).toBe('NEGATIVE_BESTAND')
+    expect(st.lastFailure?.stuckItems.length).toBe(2)
+  })
+
+  it('Erfolgreicher Sync setzt lastFailure zurück auf null', async () => {
+    setDb(new BmaLagerDb(`bma-lager-test-${Math.random().toString(36).slice(2)}`))
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url.includes('/api/sync/snapshot')) {
+        return new Response(
+          JSON.stringify({
+            serverTime: new Date().toISOString(),
+            since: '1970-01-01T00:00:00.000Z',
+            artikel: [],
+            standorte: [],
+            projekte: [],
+            buchungen: [],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      if (url.endsWith('/api/sync/status')) {
+        return new Response(
+          JSON.stringify({
+            serverTime: new Date().toISOString(),
+            counts: { artikel: 0, standorte: 0, projekte: 0, buchungen: 0 },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      return new Response('not found', { status: 404 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { runSync, getSyncStatus, _resetSyncForTests } = await import('../worker')
+    _resetSyncForTests()
+    await runSync({ token: null, apiBase: 'http://test.local' })
+
+    expect(getSyncStatus().lastFailure).toBeNull()
+    expect(getSyncStatus().lastError).toBeNull()
+  })
+})
+
 afterEach(() => {
   vi.unstubAllGlobals()
 })
