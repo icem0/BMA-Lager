@@ -63,6 +63,10 @@ services:
       RATE_LIMIT_LOGIN_MAX: ${RATE_LIMIT_LOGIN_MAX:-5}
       RATE_LIMIT_LOGIN_WINDOW: ${RATE_LIMIT_LOGIN_WINDOW:-1 minute}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # Development mode flag. API exponeert /api/dev/status mit dem
+      # Wert. PWA bekommt das gleiche Flag ueber VITE_DEV_MODE (siehe
+      # pwa-Service). Im Live-Betrieb DEV_MODE=false setzen.
+      DEV_MODE: ${DEV_MODE:-false}
       PORT: "3000"
     # Migrationen laufen vor jedem API-Start. Idempotent: bereits
     # angewendete SQL-Dateien werden uebersprungen, also kein Risiko.
@@ -106,6 +110,11 @@ services:
       # Leer = gleicher Origin (nginx im PWA-Container proxied /api/*).
       # Sonst = absolute URL (z. B. http://api.example.com:4242).
       VITE_API_URL: ${VITE_API_URL-}
+      # Development mode flag. Wird beim Container-Start in
+      # /usr/share/nginx/html/config.js geschrieben und beim Laden
+      # der PWA als window.__BMA_DEV_MODE__ ausgelesen. Steuert das
+      # "DEV MODE"-Badge in Login-Screen und Header. Werte: 'true' | 'false'.
+      VITE_DEV_MODE: ${DEV_MODE:-false}
     ports:
       - "${PWA_PORT:-4280}:3000"
     networks: [internal]

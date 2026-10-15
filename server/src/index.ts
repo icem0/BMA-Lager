@@ -13,6 +13,8 @@ import { setupRoutes } from './auth/setup-routes.js'
 import { syncRoutes } from './sync/routes.js'
 import { fotoRoutes } from './fotos/routes.js'
 import { userRoutes } from './users/routes.js'
+import { devRoutes } from './dev/routes.js'
+import { truncateAllDataTables } from './dev/dev-reset.js'
 import { closeDb } from './db/client.js'
 
 async function main() {
@@ -45,6 +47,11 @@ async function main() {
     time: new Date().toISOString(),
   }))
 
+  // Dev-Mode Status (kein Auth — enthaelt nur den Modus-Flag).
+  await app.register(async (instance) => {
+    await devRoutes(instance)
+  })
+
   // Login-Rate-Limit (nur für Login-Route)
   await app.register(async (instance) => {
     await authRoutes(instance)
@@ -63,6 +70,12 @@ async function main() {
     await userRoutes(instance)
     await fotoRoutes(instance)
   })
+
+  // DEV_MODE=true: alle Daten-Tabellen leeren, BEVOR der HTTP-Server
+  // antwortet. Migrationen sind vorher gelaufen (siehe docker-compose
+  // api.command: 'node dist/db/migrate.js && exec node dist/index.js').
+  // Bei DEV_MODE=false ist die Funktion ein No-Op.
+  await truncateAllDataTables()
 
   // Globaler Error-Handler: einheitliches Format
   app.setErrorHandler((err: unknown, _req, reply) => {

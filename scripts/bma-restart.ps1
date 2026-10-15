@@ -1,28 +1,33 @@
 #!/usr/bin/env pwsh
-# bma-restart.ps1 — Frischer Test-Stack.
+# bma-restart.ps1 — Fresh test stack.
 #
-# Stoppt den Stack, entfernt alle named volumes (inkl. anonyme,
-# die Docker fuer ungebundene Postgres-Mounts anlegt), zieht die
-# aktuellen GHCR-Images und startet den Stack neu.
+# Always drops the data volume (bma-lager_pgdata) and restarts with the
+# latest GHCR images, so every run is a clean *from-scratch* test:
+# fresh DB, no admin -> PWA shows the setup form.
 #
-# Ergebnis: leere DB, kein Admin -> PWA zeigt Setup-Formular.
-# Foto-Daten unter ./.data/fotos bleiben erhalten (Bind-Mount, kein
-# named volume -> wird von `down -v` nicht beruehrt).
+# This script is intended for LOCAL TESTING only. For production /
+# live use, run `docker compose down && docker compose pull &&
+# docker compose up -d` directly against the base docker-compose.yml
+# WITHOUT this wrapper and WITHOUT docker-compose.override.yml (see
+# the comment at the top of that file).
+#
+# Photo data under ./.data/fotos survives every restart (bind mount,
+# not a named volume -> untouched by `down -v`).
 #
 # Aufruf:
 #   powershell -File ./scripts/bma-restart.ps1
 #   powershell -File ./scripts/bma-restart.ps1 -WaitForSha 82877e68... -WaitTimeoutSec 300
 #
 # Parameter:
-#   -WaitForSha <sha>   Wartet nach 'up', bis die GHCR-Images fuer
-#                       diesen SHA verfuegbar sind. Praktisch nach
-#                       'git push', um direkt zu deployen sobald CI
-#                       die Images gebaut hat.
-#   -WaitTimeoutSec <n> Timeout fuer -WaitForSha (default 60).
-#   -SkipPull           Ueberspringt `docker compose pull`.
+#   -WaitForSha <sha>   Wait until the GHCR images for this SHA are
+#                       available (docker buildx imagetools inspect),
+#                       then restart. Practical directly after
+#                       'git push' for auto-redeploy.
+#   -WaitTimeoutSec <n> Timeout for -WaitForSha (default 60).
+#   -SkipPull           Skip `docker compose pull`.
 #
-# Voraussetzung: Docker Desktop (stellt `docker buildx imagetools`
-# fuer die GHCR-Erkennung bereit) und WSL 2.
+# Prerequisite: Docker Desktop (provides `docker buildx imagetools`
+# for the GHCR check) and WSL 2.
 
 param(
     [string]$WaitForSha = "",
@@ -124,43 +129,43 @@ if ($WaitForSha) {
     Write-Host "  beide Images verfuegbar." -ForegroundColor Green
 }
 
-Write-Host "[bma] Stoppe Stack und entferne alle named volumes..." -ForegroundColor Cyan
+Write-Host "[bma] Stopping stack and removing the data volume (fresh test)..." -ForegroundColor Cyan
 docker compose down -v | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "docker compose down -v fehlgeschlagen" }
+if ($LASTEXITCODE -ne 0) { throw "docker compose down -v failed" }
 
 if (-not $SkipPull) {
-    Write-Host "[bma] Ziehe aktuelle Images von GHCR..." -ForegroundColor Cyan
+    Write-Host "[bma] Pulling latest images from GHCR..." -ForegroundColor Cyan
     docker compose pull | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "docker compose pull fehlgeschlagen" }
+    if ($LASTEXITCODE -ne 0) { throw "docker compose pull failed" }
 } else {
-    Write-Host "[bma] Ueberspringe pull (-SkipPull)." -ForegroundColor DarkGray
+    Write-Host "[bma] Skipping pull (-SkipPull)." -ForegroundColor DarkGray
 }
 
-Write-Host "[bma] Starte Stack neu..." -ForegroundColor Cyan
+Write-Host "[bma] Starting stack..." -ForegroundColor Cyan
 docker compose up -d | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "docker compose up -d fehlgeschlagen" }
+if ($LASTEXITCODE -ne 0) { throw "docker compose up -d failed" }
 
-Write-Host "[bma] Warte auf Healthchecks..." -ForegroundColor Cyan
+Write-Host "[bma] Waiting for healthchecks..." -ForegroundColor Cyan
 Start-Sleep -Seconds 20
 
 Write-Host "[bma] Status:" -ForegroundColor Cyan
 docker compose ps
 
-Write-Host "[bma] API-Health (direkt):" -ForegroundColor Cyan
+Write-Host "[bma] API health (direct):" -ForegroundColor Cyan
 try {
     $resp = Invoke-WebRequest -Uri "http://localhost:4242/api/healthz" -UseBasicParsing -TimeoutSec 5
     Write-Host "  HTTP $($resp.StatusCode)"
 } catch {
-    Write-Host "  nicht erreichbar: $($_.Exception.Message)" -ForegroundColor Yellow
+    Write-Host "  not reachable: $($_.Exception.Message)" -ForegroundColor Yellow
 }
 
-Write-Host "[bma] Setup-Status (sollte setupRequired:true sein):" -ForegroundColor Cyan
+Write-Host "[bma] Setup status (should be setupRequired:true):" -ForegroundColor Cyan
 try {
     $resp = Invoke-WebRequest -Uri "http://localhost:4242/api/auth/setup-status" -UseBasicParsing -TimeoutSec 5
     Write-Host "  $($resp.Content)"
 } catch {
-    Write-Host "  nicht erreichbar: $($_.Exception.Message)" -ForegroundColor Yellow
+    Write-Host "  not reachable: $($_.Exception.Message)" -ForegroundColor Yellow
 }
 
 Write-Host ""
-Write-Host "[bma] Fertig. PWA: http://localhost:4280  API: http://localhost:4242" -ForegroundColor Green
+Write-Host "[bma] Done. PWA: http://localhost:4280  API: http://localhost:4242" -ForegroundColor Green

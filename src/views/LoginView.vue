@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { version, commit, branch, buildDate } from '../version'
+import { useDevMode } from '../composables/useDevMode'
 import { fuehreSetupDurch } from '../auth/users'
 import { ApiError } from '../auth/api'
 import { authFehlerText } from '../auth/messages'
@@ -11,6 +12,7 @@ import { authFehlerText } from '../auth/messages'
 const router = useRouter()
 const auth = useAuthStore()
 const { t } = useI18n()
+const { active: devModeActive, tooltip: devModeTooltip } = useDevMode()
 
 type Modus = 'laden' | 'setup' | 'login'
 
@@ -191,6 +193,15 @@ async function copyVersion(): Promise<void> {
 
 <template>
   <section class="login">
+    <div
+      v-if="devModeActive"
+      class="dev-badge"
+      :title="devModeTooltip"
+      aria-label="Development-Modus aktiv"
+    >
+      DEV MODE
+    </div>
+
     <div class="card login-card">
       <div class="brand">
         <img src="/bma-lager-logo.png" alt="" width="48" height="48" />
@@ -417,6 +428,24 @@ async function copyVersion(): Promise<void> {
   place-items: center;
   padding: 2rem 1rem;
   background: var(--bg-app);
+}
+
+.dev-badge {
+  position: fixed;
+  top: 0.75rem;
+  right: 0.75rem;
+  background: #ff7a00;
+  color: #1a0a00;
+  padding: 0.3rem 0.7rem;
+  border-radius: var(--radius-sm);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  cursor: help;
+  box-shadow: 0 0 0 2px rgba(255, 122, 0, 0.25);
+  z-index: 60;
+  user-select: none;
 }
 
 .login-card {

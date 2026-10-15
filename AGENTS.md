@@ -99,7 +99,10 @@ docker compose down -v && docker compose pull && docker compose up -d
 ```
 
 Oder als Wrapper: `scripts/bma-restart.ps1` — stoppt, räumt Volumes weg,
-pullt, startet und gibt Health-/Setup-Status aus.
+pullt, startet und gibt Health-/Setup-Status aus. **Im Livebetrieb
+darf dieses Skript NICHT laufen** — es löscht den DB-Volume. Für den
+Server: `docker compose pull && docker compose up -d` ohne Override
+und ohne `-v`.
 
 **Push → warten auf GHCR → Redeploy** (manuell, nicht als Hook):
 

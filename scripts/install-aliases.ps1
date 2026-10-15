@@ -21,16 +21,14 @@ $block = @"
 
 # ---- bma-lager helpers (install-aliases.ps1) ----
 function bma-restart {
+    # Fresh test stack: down -v + pull + up. DB is wiped.
     & "$RepoRoot\scripts\bma-restart.ps1" @args
 }
 function bma-deploy {
-    # 1) git push
-    # 2) SHA bestimmen
-    # 3) auf GHCR warten
-    # 4) stack neu starten
+    # git push, wait for GHCR, fresh redeploy.
     $sha = git -C "$RepoRoot" rev-parse HEAD
     git -C "$RepoRoot" push @args
-    if ($LASTEXITCODE -ne 0) { throw "git push fehlgeschlagen" }
+    if ($LASTEXITCODE -ne 0) { throw "git push failed" }
     & "$RepoRoot\scripts\bma-restart.ps1" -WaitForSha $sha -WaitTimeoutSec 300
 }
 function bma-logs-api {
@@ -59,8 +57,8 @@ if ($existing -and $existing.Contains($startMarker) -and $existing.Contains($end
 }
 
 Write-Host ""
-Write-Host "PowerShell neu starten, dann stehen dir zur Verfuegung:" -ForegroundColor Cyan
-Write-Host "  bma-restart              frischer stack (down -v + pull + up)" -ForegroundColor Cyan
-Write-Host "  bma-deploy               git push + auf GHCR warten + redeploy" -ForegroundColor Cyan
+Write-Host "Restart PowerShell, then these are available:" -ForegroundColor Cyan
+Write-Host "  bma-restart              fresh stack (down -v + pull + up)" -ForegroundColor Cyan
+Write-Host "  bma-deploy               git push + wait for GHCR + redeploy" -ForegroundColor Cyan
 Write-Host "  bma-status               docker compose ps" -ForegroundColor Cyan
 Write-Host "  bma-logs-api             docker compose logs -f api" -ForegroundColor Cyan

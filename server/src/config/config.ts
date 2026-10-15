@@ -33,6 +33,20 @@ const schema = z.object({
   // Rate-Limit
   RATE_LIMIT_LOGIN_MAX: z.coerce.number().int().positive().default(5),
   RATE_LIMIT_LOGIN_WINDOW: z.string().default('1 minute'),
+
+  // Development-Modus. Siehe docker-compose.yml (.env DEV_MODE).
+  // Steuert u. a. das "DEV MODE"-Badge in der PWA und expose hier den
+  // Status ueber /api/dev/status. Akzeptiert 'true'/'false'/'1'/'0'
+  // (case-insensitive). Andere Werte oder nicht gesetzt -> false.
+  // Bewusst locker: ein falsch gesetztes DEV_MODE soll den Server
+  // nicht am Start hindern.
+  DEV_MODE: z
+    .string()
+    .default('false')
+    .transform((v) => {
+      const n = v.toLowerCase()
+      return n === 'true' || n === '1' || n === 'yes' || n === 'on'
+    }),
 })
 
 const parsed = schema.safeParse(process.env)
