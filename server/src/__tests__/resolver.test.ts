@@ -90,3 +90,191 @@ describe('Resolver — Drizzle-string-gaendertAm Normalisierung', () => {
     ).toThrow(/neuer/)
   })
 })
+
+// Regression: PWA schickt `geaendertAm`/`erstelltAm` als ISO-String (per
+// `artikelSchema` validiert, nicht transformiert). Drizzle's
+// `PgTimestamp.mapToDriverValue` ruft `value.toISOString()` auf den Werten, die
+// an `insert()`/`update()` übergeben werden — Strings haben die Methode nicht
+// und der Push bricht mit `TypeError: value.toISOString is not a function` ab.
+// Der Resolver muss die Timestamps vor dem Statement in `Date` wandeln.
+describe('Resolver — Stammdaten-Insert normalisiert ISO-Strings auf Date', () => {
+  // Mock-DB, die alle an insert()/update()/set() übergebenen Werte einfängt.
+  // Wir brauchen die Resolver-Pfade article/standort/projekt create, die alle
+  // `tx.insert(...).values(...)` aufrufen.
+  function makeMockDb(captured: { inserts: Array<Record<string, unknown>>; updates: Array<Record<string, unknown>> }) {
+    const chainableInsert = {
+      values: (v: Record<string, unknown>) => {
+        captured.inserts.push(v)
+        return Promise.resolve()
+      },
+    }
+    const chainableUpdate = {
+      set: (v: Record<string, unknown>) => {
+        captured.updates.push(v)
+        return {
+          where: () => Promise.resolve(),
+        }
+      },
+    }
+    const txMock = {
+      select: () => ({
+        from: () => ({
+          where: () => ({
+            limit: () => Promise.resolve([]), // kein existierender Datensatz → create-insert
+          }),
+        }),
+      }),
+      insert: () => chainableInsert,
+      update: () => chainableUpdate,
+    }
+    return {
+      transaction: (fn: (tx: typeof txMock) => Promise<void>) => fn(txMock),
+    } as never
+  }
+
+  it('artikel create: geaendertAm/erstelltAm werden als Date an insert übergeben', async () => {
+    const { resolvePush } = await import('../sync/resolver.js')
+    const captured = { inserts: [] as Array<Record<string, unknown>>, updates: [] as Array<Record<string, unknown>> }
+    const dbMock = makeMockDb(captured)
+
+    await resolvePush(
+      dbMock,
+      [
+        {
+          op: 'create',
+          entity: 'artikel',
+          payload: {
+            id: 'a-1',
+            titel: 'Testartikel',
+            status: 'verfuegbar',
+            typ: 'Demo',
+            verpackungseinheit: 1,
+            geaendertAm: '2026-10-15T10:00:00.000Z',
+            erstelltAm: '2026-10-15T09:00:00.000Z',
+          },
+        },
+      ],
+      'u1',
+      'user',
+    )
+
+    expect(captured.inserts).toHaveLength(2) // 1× artikel + 1× auditLog
+    // Die auditLog-Zeile hat `zeit` als Date, aber kein `geaendertAm` — also
+    // muessen wir nach der Artikel-Zeile filtern.
+    const artikelInsert = captured.inserts.find((r) => 'geaendertAm' in r)
+    expect(artikelInsert).toBeDefined()
+    const row = artikelInsert!
+    expect(row['geaendertAm']).toBeInstanceOf(Date)
+    expect(row['erstelltAm']).toBeInstanceOf(Date)
+    expect((row['geaendertAm'] as Date).toISOString()).toBe('2026-10-15T10:00:00.000Z')
+    expect((row['erstelltAm'] as Date).toISOString()).toBe('2026-10-15T09:00:00.000Z')
+  })
+
+  it('standort/projekt create: geaendertAm/erstelltAm werden als Date an insert übergeben', async () => {
+    const { resolvePush } = await import('../sync/resolver.js')
+    const captured = { inserts: [] as Array<Record<string, unknown>>, updates: [] as Array<Record<string, unknown>> }
+    const dbMock = makeMockDb(captured)
+
+    await resolvePush(
+      dbMock,
+      [
+        {
+          op: 'create',
+          entity: 'standort',
+          payload: {
+            id: 's-1',
+            name: 'Lager Nord',
+            typ: 'lager',
+            standard: false,
+            archiviert: false,
+            geaendertAm: '2026-10-15T10:00:00.000Z',
+            erstelltAm: '2026-10-15T09:00:00.000Z',
+          },
+        },
+        {
+          op: 'create',
+          entity: 'projekt',
+          payload: {
+            id: 'p-1',
+            nummer: 'PRJ-001',
+            archiviert: false,
+            geaendertAm: '2026-10-15T10:00:00.000Z',
+            erstelltAm: '2026-10-15T09:00:00.000Z',
+          },
+        },
+      ],
+      'u1',
+      'user',
+    )
+
+    expect(captured.inserts).toHaveLength(4) // 2× Stammdaten + 2× auditLog
+    const stammdatenInserts = captured.inserts.filter((r) => 'geaendertAm' in r)
+    expect(stammdatenInserts).toHaveLength(2)
+    for (const row of stammdatenInserts) {
+      expect(row['geaendertAm']).toBeInstanceOf(Date)
+      expect(row['erstelltAm']).toBeInstanceOf(Date)
+    }
+  })
+
+  it('artikel update: geaendertAm/erstelltAm werden als Date an set() übergeben', async () => {
+    const { resolvePush } = await import('../sync/resolver.js')
+    const captured = { inserts: [] as Array<Record<string, unknown>>, updates: [] as Array<Record<string, unknown>> }
+    // Jetzt simulieren wir einen existierenden Datensatz, damit der Update-Pfad
+    // in applyLastWriterWins läuft.
+    const txMock = {
+      select: () => ({
+        from: () => ({
+          where: () => ({
+            limit: () =>
+              Promise.resolve([
+                {
+                  id: 'a-1',
+                  geaendertAm: '2026-10-14T10:00:00.000Z', // Server ist ÄLTER → Update geht durch
+                  erstelltAm: '2026-10-01T00:00:00.000Z',
+                },
+              ]),
+          }),
+        }),
+      }),
+      insert: () => ({
+        values: (v: Record<string, unknown>) => {
+          captured.inserts.push(v)
+          return Promise.resolve()
+        },
+      }),
+      update: () => ({
+        set: (v: Record<string, unknown>) => {
+          captured.updates.push(v)
+          return { where: () => Promise.resolve() }
+        },
+      }),
+    }
+    const dbMock = { transaction: (fn: (tx: typeof txMock) => Promise<void>) => fn(txMock) } as never
+
+    await resolvePush(
+      dbMock,
+      [
+        {
+          op: 'update',
+          entity: 'artikel',
+          payload: {
+            id: 'a-1',
+            titel: 'Umbenannt',
+            status: 'verfuegbar',
+            typ: 'Demo',
+            verpackungseinheit: 1,
+            geaendertAm: '2026-10-15T10:00:00.000Z',
+            erstelltAm: '2026-10-15T09:00:00.000Z',
+          },
+        },
+      ],
+      'u1',
+      'user',
+    )
+
+    expect(captured.updates).toHaveLength(1)
+    const setRow = captured.updates[0]!
+    expect(setRow['geaendertAm']).toBeInstanceOf(Date)
+    expect(setRow['erstelltAm']).toBeInstanceOf(Date)
+  })
+})

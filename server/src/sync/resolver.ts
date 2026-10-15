@@ -273,7 +273,7 @@ async function resolveArtikel(
       // Idempotent: bereits vorhanden, einfach akzeptieren (Update-Fall)
       await applyLastWriterWins(tx, artikel, op.payload)
     } else {
-      await tx.insert(artikel).values(op.payload)
+      await tx.insert(artikel).values(normalizeStammdatenTimestamps(op.payload) as never)
     }
   } else if (op.op === 'update' || op.op === 'delete') {
     await applyLastWriterWins(tx, artikel, op.payload)
@@ -289,7 +289,7 @@ async function resolveStandort(
     if (existing.length > 0) {
       await applyLastWriterWins(tx, standorte, op.payload)
     } else {
-      await tx.insert(standorte).values(op.payload)
+      await tx.insert(standorte).values(normalizeStammdatenTimestamps(op.payload) as never)
     }
   } else {
     await applyLastWriterWins(tx, standorte, op.payload)
@@ -305,7 +305,7 @@ async function resolveProjekt(
     if (existing.length > 0) {
       await applyLastWriterWins(tx, projekte, op.payload)
     } else {
-      await tx.insert(projekte).values(op.payload)
+      await tx.insert(projekte).values(normalizeStammdatenTimestamps(op.payload) as never)
     }
   } else {
     await applyLastWriterWins(tx, projekte, op.payload)
@@ -320,13 +320,13 @@ async function applyLastWriterWins(
   payload: Record<string, unknown>,
 ): Promise<void> {
   const id = payload['id'] as string
-  const incomingGeaendertAm = new Date(payload['geaendertAm'] as string)
+  const incomingGeaendertAm = toDateOrThrow(payload['geaendertAm'])
 
   const existing = await tx.select().from(table).where(eq(table.id, id)).limit(1)
   const current = existing[0]
   if (!current) {
     // Server hat es nicht (kann bei create passieren, wenn race-condition) — insert
-    await tx.insert(table).values(payload as never)
+    await tx.insert(table).values(normalizeStammdatenTimestamps(payload) as never)
     return
   }
   // Drizzle's postgres-js-Driver liefert `timestamp with timezone` als ISO-String,
@@ -339,7 +339,30 @@ async function applyLastWriterWins(
     incomingGeaendertAm,
     id,
   })
-  await tx.update(table).set(payload as never).where(eq(table.id, id))
+  await tx.update(table).set(normalizeStammdatenTimestamps(payload) as never).where(eq(table.id, id))
+}
+
+/**
+ * Konvertiert die Stammdaten-Timestamps (`geaendertAm`, `erstelltAm`) im
+ * Push-Payload von ISO-Strings auf `Date`-Instanzen. Drizzle's
+ * `PgTimestamp.mapToDriverValue` ruft naemlich `value.toISOString()` auf den
+ * Wert, der an `insert()`/`update()` uebergeben wird — Strings haben diese
+ * Methode nicht und der Push bricht mit `value.toISOString is not a function`
+ * ab. Die PWA schickt timestamps als ISO-Strings (per `artikelSchema` validiert,
+ * nicht transformiert), also muessen wir die Konvertierung hier serverseitig
+ * machen. Werte, die bereits `Date` sind, bleiben unveraendert.
+ */
+function normalizeStammdatenTimestamps(
+  payload: Record<string, unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...payload }
+  for (const key of ['geaendertAm', 'erstelltAm'] as const) {
+    const v = out[key]
+    if (typeof v === 'string') {
+      out[key] = toDateOrThrow(v)
+    }
+  }
+  return out
 }
 
 /**
