@@ -51,6 +51,7 @@ async function seedArtikel(
     mindestbestand,
     nachbestellHinweis: null,
     bestellnummer: null,
+    barcode: null,
     listenpreis: null,
     geaendertAm: null,
     erstelltAm: '2025-01-01T00:00:00.000Z',

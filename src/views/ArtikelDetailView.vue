@@ -103,6 +103,12 @@ function formatDatum(iso: string): string {
           <dt>{{ t('view.artikel.form.bestellnummer') }}</dt>
           <dd>{{ artikel.bestellnummer }}</dd>
         </div>
+        <div v-if="artikel.barcode">
+          <dt>{{ t('view.artikel.form.barcode') }}</dt>
+          <dd>
+            <code>{{ artikel.barcode }}</code>
+          </dd>
+        </div>
         <div v-if="artikel.listenpreis != null">
           <dt>Listenpreis</dt>
           <dd>{{ artikel.listenpreis.toFixed(2) }} €</dd>

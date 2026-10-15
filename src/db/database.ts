@@ -2,10 +2,9 @@
 // Schema-Versionierung explizit: jede Schema-Änderung legt eine neue .version() an.
 // Die Domänen-Schicht liest und schreibt über dieses Singleton.
 //
-// Aktuelles Schema: v6 (Einstellungen Cross-Device-synchronisiert mit
-// userId-Scope, Tabellenname final `einstellungen`). Frühere Versionen
-// (v1–v5) sind nur noch für Migration existierender Browser-DBs. Wenn
-// du eine frische DB anlegst, wird direkt v6 verwendet.
+// Aktuelles Schema: v8 (Barcode-Feld + Index auf `artikel.barcode`).
+// Frühere Versionen (v1–v7) sind nur noch für Migration existierender
+// Browser-DBs. Wenn du eine frische DB anlegst, wird direkt v8 verwendet.
 //
 // Hinweis: v5→v6 ist ein PK-Wechsel von `key` auf `[key+userId]` für die
 // `einstellungen`-Tabelle. Dexie kann das nicht in-place; siehe Kommentar
@@ -208,6 +207,31 @@ export class BmaLagerDb extends Dexie {
         }
         if (alle.length > 0) {
           await tx.table('outbox').bulkPut(alle)
+        }
+      })
+
+    // v8: Barcode-Feld auf `artikel` — semantisch getrennt von
+    // `bestellnummer` (Lieferanten-Bestellnr. vs. Strichcode am Artikel).
+    // Neuer Index auf `barcode` fuer den schnellen Scanner-Lookup.
+    // Bestehende Datensaetze bekommen `barcode = null` (default).
+    this.version(8)
+      .stores({
+        artikel: 'id, sharePointId, typ, status, titel, barcode',
+        standorte: 'id, name, typ, archiviert',
+        buchungen:
+          'id, artikelId, standortId, standortZielId, typ, erstelltAm, storno, stornoVon, paarId, serverId',
+        projekte: 'id, nummer, archiviert',
+        einstellungen: '[key+userId], key, userId',
+        auditLog: 'id, aktion, entitaet, entitaetId, zeit',
+        outbox: 'id, entity, syncedAt, createdAt, quarantinedAt',
+      })
+      .upgrade(async (tx) => {
+        const alle = await tx.table('artikel').toArray()
+        for (const row of alle as Array<Record<string, unknown>>) {
+          if (row['barcode'] === undefined) row['barcode'] = null
+        }
+        if (alle.length > 0) {
+          await tx.table('artikel').bulkPut(alle)
         }
       })
   }

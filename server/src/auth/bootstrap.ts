@@ -76,6 +76,7 @@ export function buildTestArtikel(inhalt: BootstrapInhalt) {
     mindestbestand: a.mindestbestand,
     nachbestellHinweis: null,
     bestellnummer: null,
+    barcode: null,
     listenpreis: null,
     geaendertAm: now,
     erstelltAm: now,

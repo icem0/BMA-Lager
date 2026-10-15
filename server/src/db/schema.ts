@@ -75,6 +75,9 @@ export const artikel = pgTable(
       enum: ['i.O', 'bald', 'dringend'],
     }),
     bestellnummer: text('bestellnummer'),
+    /** Strichcode (EAN/Code128/QR) — semantisch getrennt von `bestellnummer`
+     *  (Lieferanten-Bestellnr. vs. Strichcode am Artikel). */
+    barcode: text('barcode'),
     listenpreis: integer('listenpreis'), // in Cent, um Floats zu vermeiden
     geaendertAm: timestamp('geaendert_am', { withTimezone: true }).notNull(),
     erstelltAm: timestamp('erstellt_am', { withTimezone: true }).notNull(),
@@ -83,6 +86,7 @@ export const artikel = pgTable(
     index('artikel_sharepoint_idx').on(t.sharePointId),
     index('artikel_typ_idx').on(t.typ),
     index('artikel_status_idx').on(t.status),
+    index('artikel_barcode_idx').on(t.barcode),
     // Sync-Snapshot filtert auf `geaendert_am > since` — Index ist Pflicht.
     index('artikel_geaendert_am_idx').on(t.geaendertAm),
   ],

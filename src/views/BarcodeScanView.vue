@@ -1,8 +1,12 @@
 <script setup lang="ts">
 // Barcode-Scan-View: Kamera-Scan mit Direktnavigation in die Buchungsmaske.
 // Strategie:
-//   - Wenn Artikel mit passender bestellnummer existiert → /buchung/neu?artikelId=...
+//   - Wenn Artikel mit passendem barcode, passender bestellnummer ODER
+//     passender id existiert → /buchung/neu?artikelId=...
 //   - Sonst: kurzer Dialog "Neuen Artikel anlegen oder weiter scannen?"
+//     Beim Anlegen wird der gescannte Code als `barcode` an die Form
+//     weitergereicht (route.query.barcode), damit der Folge-Scan den
+//     frisch angelegten Artikel findet.
 
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
@@ -30,16 +34,22 @@ const {
 
 async function codeVerarbeiten(code: string, _format: string): Promise<void> {
   gefunden.value = code
-  // Artikel mit dieser bestellnummer suchen
-  const artikel = artikelStore.artikel.find((a) => a.bestellnummer === code || a.id === code)
+  // Artikel suchen — Reihenfolge: barcode (primär), bestellnummer (Legacy-
+  // Workaround), id (manuell eingegebene UUID). Beim Match direkt in die
+  // Buchungsmaske.
+  const artikel = artikelStore.artikel.find(
+    (a) => a.barcode === code || a.bestellnummer === code || a.id === code,
+  )
   if (artikel) {
     void router.push({ name: 'buchung-neu', query: { artikelId: artikel.id } })
     return
   }
-  // Nicht gefunden — User fragen
+  // Nicht gefunden — User fragen. Der gescannte Code wird als
+  // route.query.barcode an die Artikel-Form durchgereicht, damit der
+  // frisch angelegte Artikel beim nächsten Scan gefunden wird.
   const anlegen = confirm(`Code "${code}" nicht im Bestand. Neuen Artikel anlegen?`)
   if (anlegen) {
-    void router.push({ name: 'artikel-neu', query: { bestellnummer: code } })
+    void router.push({ name: 'artikel-neu', query: { barcode: code } })
   } else {
     gefunden.value = null
   }

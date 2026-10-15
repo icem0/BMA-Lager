@@ -54,6 +54,7 @@ const artikelFeldOptionen: ArtikelFeld[] = [
   'mindestbestand',
   'nachbestellHinweis',
   'bestellnummer',
+  'barcode',
   'listenpreis',
   'geaendertAm',
 ]

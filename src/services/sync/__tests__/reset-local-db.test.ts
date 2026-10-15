@@ -31,6 +31,7 @@ function artikelAnlage(id: string, titel: string): Artikel {
     mindestbestand: null,
     nachbestellHinweis: null,
     bestellnummer: null,
+    barcode: null,
     listenpreis: null,
     geaendertAm: now,
     erstelltAm: now,

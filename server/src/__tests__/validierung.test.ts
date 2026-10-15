@@ -38,6 +38,32 @@ describe('validierung.schemas', () => {
       })
       expect(r.success).toBe(true)
     })
+    it('akzeptiert Artikel mit barcode', () => {
+      const r = artikelSchema.safeParse({
+        id: 'a1',
+        titel: 'Test',
+        status: 'verfuegbar',
+        typ: 'Alarmierung',
+        verpackungseinheit: 1,
+        barcode: '4006381333931',
+        geaendertAm: '2025-04-14T11:00:00.000Z',
+        erstelltAm: '2025-04-14T11:00:00.000Z',
+      })
+      expect(r.success).toBe(true)
+    })
+    it('akzeptiert Artikel mit barcode=null', () => {
+      const r = artikelSchema.safeParse({
+        id: 'a1',
+        titel: 'Test',
+        status: 'verfuegbar',
+        typ: 'Alarmierung',
+        verpackungseinheit: 1,
+        barcode: null,
+        geaendertAm: '2025-04-14T11:00:00.000Z',
+        erstelltAm: '2025-04-14T11:00:00.000Z',
+      })
+      expect(r.success).toBe(true)
+    })
     it('lehnt unbekannten Status ab', () => {
       const r = artikelSchema.safeParse({
         id: 'a1',

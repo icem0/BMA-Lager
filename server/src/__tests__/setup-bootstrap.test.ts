@@ -59,7 +59,7 @@ describe('buildHauptlager', () => {
 })
 
 describe('buildTestArtikel', () => {
-  it('liefert genau 5 verfuegbare Demo-Artikel ohne Lieferant/Bestellnummer', () => {
+  it('liefert genau 5 verfuegbare Demo-Artikel ohne Lieferant/Bestellnummer/Barcode', () => {
     const artikel = __test__.buildTestArtikel(bootstrapInhalt('de-DE'))
 
     expect(artikel).toHaveLength(5)
@@ -67,6 +67,7 @@ describe('buildTestArtikel', () => {
     expect(artikel.every((a) => a.typ === 'Demo')).toBe(true)
     expect(artikel.every((a) => a.lieferant === null)).toBe(true)
     expect(artikel.every((a) => a.bestellnummer === null)).toBe(true)
+    expect(artikel.every((a) => a.barcode === null)).toBe(true)
     expect(artikel.every((a) => a.listenpreis === null)).toBe(true)
     expect(artikel.every((a) => a.archiviert === false)).toBe(true)
     expect(artikel.every((a) => typeof a.id === 'string' && a.id.length > 0)).toBe(true)

@@ -26,6 +26,11 @@ export interface Artikel {
   mindestbestand: number | null
   nachbestellHinweis: NachbestellHinweis
   bestellnummer: string | null
+  /** Strichcode (EAN/Code128/QR) des Artikels. Wird vom Scanner
+   *  gelesen und ist semantisch getrennt von `bestellnummer` (das ist
+   *  die Bestellnummer des Lieferanten). `null` = kein Barcode
+   *  hinterlegt. */
+  barcode: string | null
   listenpreis: number | null
   geaendertAm: Iso | null
   erstelltAm: Iso

@@ -54,6 +54,8 @@ export default {
         ve: 'Packaging unit',
         mindestbestand: 'Minimum stock',
         bestellnummer: 'Order no.',
+        barcode: 'Barcode',
+        barcodeHint: 'EAN, Code128 or QR. Used by the scanner.',
         speichern: 'Save',
         abbrechen: 'Cancel',
         pflicht: 'Required',

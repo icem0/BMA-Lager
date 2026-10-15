@@ -308,6 +308,7 @@ function mappeArtikelZeile(row: string[], headers: string[], mapping: ArtikelMap
     mindestbestand: parseFloatOrNull(feld('mindestbestand')),
     nachbestellHinweis: normalizeNachbestellHinweis(feld('nachbestellHinweis')),
     bestellnummer: feld('bestellnummer') || null,
+    barcode: feld('barcode') || null,
     listenpreis: parseFloatOrNull(feld('listenpreis')),
     geaendertAm: parseIsoDatum(feld('geaendertAm')),
     erstelltAm: now,

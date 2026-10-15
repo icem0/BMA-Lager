@@ -22,6 +22,9 @@ export interface ArtikelEingabe {
   mindestbestand?: number | null
   nachbestellHinweis?: NachbestellHinweis
   bestellnummer?: string | null
+  /** Strichcode (EAN/Code128/QR). Semantisch getrennt von
+   *  `bestellnummer` (Lieferanten-Bestellnr. vs. Strichcode am Artikel). */
+  barcode?: string | null
   listenpreis?: number | null
 }
 
@@ -95,6 +98,7 @@ export const useArtikelStore = defineStore('artikel', () => {
       mindestbestand: e.mindestbestand ?? null,
       nachbestellHinweis: e.nachbestellHinweis ?? null,
       bestellnummer: e.bestellnummer ?? null,
+      barcode: e.barcode ?? null,
       listenpreis: e.listenpreis ?? null,
       geaendertAm: now,
       erstelltAm: now,

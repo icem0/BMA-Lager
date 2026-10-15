@@ -36,6 +36,13 @@
       "when": 1700000004000,
       "tag": "0005_einstellungen",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1700000005000,
+      "tag": "0006_artikel_barcode",
+      "breakpoints": true
     }
   ]
 }

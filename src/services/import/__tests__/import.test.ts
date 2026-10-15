@@ -58,6 +58,13 @@ describe('defaultArtikelMapping', () => {
     expect(mapping['Bestellnr.']).toBe('bestellnummer')
     expect(mapping['Geändert']).toBe('geaendertAm')
   })
+
+  it('mappt Barcode-/EAN-Spalten auf das barcode-Feld', () => {
+    const parsed = parseCsv('ID;Title;Barcode;EAN\n1;Foo;4006381333931;4006381333931\n')
+    const mapping = defaultArtikelMapping(parsed.headers)
+    expect(mapping['Barcode']).toBe('barcode')
+    expect(mapping['EAN']).toBe('barcode')
+  })
 })
 
 describe('defaultWarenMapping', () => {
@@ -110,6 +117,25 @@ describe('importArtikelAusCsv (nur Stammdaten)', () => {
     // Kein Hauptlager angelegt – das ist Aufgabe des Waren-Imports.
     expect(await testDb.standorte.toArray()).toEqual([])
     expect(await testDb.buchungen.toArray()).toEqual([])
+  })
+
+  it('uebernimmt das barcode-Feld aus der CSV', async () => {
+    const csv = `ID;Title;Barcode
+1;Test;4006381333931
+2;OhneBarcode;
+`
+    const parsed = parseCsv(csv)
+    const bericht = await importArtikelAusCsv({
+      rows: parsed.rows,
+      headers: parsed.headers,
+      mapping: defaultArtikelMapping(parsed.headers),
+    })
+    expect(bericht.artikelAngelegt).toBe(2)
+    const artikel = await testDb.artikel.toArray()
+    const mit = artikel.find((a) => a.titel === 'Test')
+    const ohne = artikel.find((a) => a.titel === 'OhneBarcode')
+    expect(mit?.barcode).toBe('4006381333931')
+    expect(ohne?.barcode).toBeNull()
   })
 })
 

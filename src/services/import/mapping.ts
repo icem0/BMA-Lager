@@ -17,6 +17,7 @@ export type ArtikelFeld =
   | 'mindestbestand'
   | 'nachbestellHinweis'
   | 'bestellnummer'
+  | 'barcode'
   | 'listenpreis'
   | 'geaendertAm'
   | 'sharePointId'
@@ -51,6 +52,7 @@ export function defaultArtikelMapping(headers: string[]): ArtikelMapping {
     else if (key === 'bestandmin' || key === 'mindestbestand') map[h] = 'mindestbestand'
     else if (key === 'nachbestellung') map[h] = 'nachbestellHinweis'
     else if (key === 'bestellnr' || key === 'bestellnummer') map[h] = 'bestellnummer'
+    else if (key === 'barcode' || key === 'ean' || key === 'strichcode') map[h] = 'barcode'
     else if (key === 'listenpreis') map[h] = 'listenpreis'
     else if (
       key === 'gendert' ||

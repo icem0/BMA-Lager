@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { useRouter, RouterLink } from 'vue-router'
+import { ref, onMounted } from 'vue'
+import { useRoute, useRouter, RouterLink } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useArtikelStore } from '../stores/artikel'
 import { useArtikelTypen } from '../composables/useArtikelTypen'
 import type { ArtikelStatus } from '../db/types'
 
 const { t } = useI18n()
+const route = useRoute()
 const router = useRouter()
 const artikelStore = useArtikelStore()
 const { nurKonfigurierte } = useArtikelTypen()
@@ -19,6 +20,7 @@ interface Form {
   verpackungseinheit: number
   mindestbestand: number | null
   bestellnummer: string
+  barcode: string
   listenpreis: number | null
 }
 
@@ -31,6 +33,7 @@ const initialForm: Form = (() => {
     verpackungseinheit: 1,
     mindestbestand: null,
     bestellnummer: '',
+    barcode: '',
     listenpreis: null,
   }
 })()
@@ -38,6 +41,18 @@ const initialForm: Form = (() => {
 const formular = ref<Form>({ ...initialForm })
 const fehler = ref<string>('')
 const laufend = ref(false)
+
+onMounted(() => {
+  // Wenn der Scanner einen Code geliefert hat, im Barcode-Feld
+  // vorbefüllen. Das ist der zentrale Bugfix: vorher wurde der
+  // gescannte Code per Query-Param uebergeben, aber das Form hat
+  // ihn ignoriert — der Artikel wurde ohne Barcode angelegt, der
+  // naechste Scan fand den Artikel nicht.
+  const queryBarcode = route.query.barcode
+  if (typeof queryBarcode === 'string' && queryBarcode.length > 0) {
+    formular.value.barcode = queryBarcode
+  }
+})
 
 async function speichern(): Promise<void> {
   if (laufend.value) return
@@ -60,6 +75,7 @@ async function speichern(): Promise<void> {
       verpackungseinheit: formular.value.verpackungseinheit,
       mindestbestand: formular.value.mindestbestand,
       bestellnummer: formular.value.bestellnummer.trim() || null,
+      barcode: formular.value.barcode.trim() || null,
       listenpreis: formular.value.listenpreis,
     })
     void router.push('/artikel')
@@ -143,6 +159,19 @@ const statusOptionen: ArtikelStatus[] = [
         <label>
           <span>{{ t('view.artikel.form.bestellnummer') }}</span>
           <input v-model="formular.bestellnummer" autocomplete="off" :disabled="laufend" />
+        </label>
+        <label>
+          <span>{{ t('view.artikel.form.barcode') }}</span>
+          <input
+            v-model="formular.barcode"
+            autocomplete="off"
+            inputmode="text"
+            :disabled="laufend"
+            data-testid="artikel-form-barcode"
+          />
+          <small class="hint">
+            {{ t('view.artikel.form.barcodeHint') }}
+          </small>
         </label>
         <label>
           <span>Listenpreis</span>
