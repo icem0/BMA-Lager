@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { onMounted, onBeforeUnmount, ref, watchEffect, computed } from 'vue'
 import { RouterLink, useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
@@ -118,7 +118,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('click', onDocumentClick)
 })
 
-// Wenn sich der Login-Status ├ñndert, Stores entsprechend starten/stoppen.
+// Wenn sich der Login-Status ändert, Stores entsprechend starten/stoppen.
 watchEffect(() => {
   if (auth.istAngemeldet) {
     settings.start()
@@ -132,7 +132,7 @@ watchEffect(() => {
       getToken: () => (auth.session?.jwtExpiresAt ? localStorage.getItem('bma.auth.jwt') : null),
       intervalSek: 30,
       onAuthRevoked: () => {
-        // Token ist abgelaufen / ung├╝ltig. Auth-Store leeren, der Router
+        // Token ist abgelaufen / ungültig. Auth-Store leeren, der Router
         // schickt uns dann automatisch auf die Login-View.
         void auth.abmelden()
         if (router.currentRoute.value.name !== 'login') {
@@ -159,10 +159,10 @@ function abmelden(): void {
   void router.push('/login')
 }
 
-const versionLabel = `v${version} ┬À ${commit}`
+const versionLabel = `v${version} · ${commit}`
 const buildDateFormatiert = new Date(buildDate).toLocaleString()
 const repoUrl = 'https://github.com/icem0/bma-lager'
-const versionString = `bma-lager v${version} (commit ${commit}, branch ${branch}, built ${buildDateFormatiert}) ┬À MIT ┬À ${repoUrl}`
+const versionString = `bma-lager v${version} (commit ${commit}, branch ${branch}, built ${buildDateFormatiert}) · MIT · ${repoUrl}`
 
 const copyStatus = ref<'idle' | 'ok' | 'fehler'>('idle')
 let copyResetTimer: ReturnType<typeof setTimeout> | null = null
@@ -223,7 +223,7 @@ async function manuellSync(): Promise<void> {
   await ladeSyncDetail()
 }
 
-// ---------- Cache l├Âschen ----------
+// ---------- Cache löschen ----------
 
 type CacheResetPhase = 'idle' | 'bestaetigen' | 'laufend' | 'fehler'
 const cacheResetPhase = ref<CacheResetPhase>('idle')
@@ -244,7 +244,7 @@ async function cacheResetBestaetigen(): Promise<void> {
   cacheResetFehler.value = null
   try {
     await clearAppCacheAndReload()
-    // Erfolg f├╝hrt zum Reload ÔÇö wenn nicht, fallen wir zur├╝ck in 'idle'.
+    // Erfolg führt zum Reload — wenn nicht, fallen wir zurück in 'idle'.
     cacheResetPhase.value = 'idle'
   } catch (e) {
     cacheResetFehler.value = e instanceof Error ? e.message : String(e)
@@ -252,7 +252,7 @@ async function cacheResetBestaetigen(): Promise<void> {
   }
 }
 
-// ---------- Lokale DB l├Âschen ----------
+// ---------- Lokale DB löschen ----------
 
 type DbResetPhase = 'idle' | 'bestaetigen' | 'laufend' | 'fehler'
 const dbResetPhase = ref<DbResetPhase>('idle')
@@ -276,7 +276,7 @@ async function dbResetBestaetigen(): Promise<void> {
       apiBase: getApiBaseUrl(),
       token: localStorage.getItem('bma.auth.jwt'),
     })
-    // Snapshot wurde in die frische DB geschrieben ÔÇö jetzt neu laden,
+    // Snapshot wurde in die frische DB geschrieben — jetzt neu laden,
     // damit die Stores (Pinia + liveQuery) die Daten aus der neuen
     // Instanz lesen.
     window.location.reload()
@@ -333,7 +333,7 @@ const syncZustandLabel = computed((): string => {
     case 'error':
       return 'Sync-Fehler'
     case 'syncing':
-      return 'SynchronisiereÔÇª'
+      return 'Synchronisiere…'
     case 'pending':
       return `${sync.status.pending} ausstehend`
     case 'diverged':
@@ -348,21 +348,21 @@ const syncZustandLabel = computed((): string => {
 
 const syncZustandTitel = computed(() => {
   const basis = `DB-Sync: ${syncZustandLabel.value}`
-  if (sync.status.lastError) return `${basis} ÔÇö ${sync.status.lastError}`
+  if (sync.status.lastError) return `${basis} — ${sync.status.lastError}`
   return basis
 })
 
 function formatIso(iso: string | null): string {
-  if (!iso) return 'ÔÇô'
+  if (!iso) return '–'
   const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return 'ÔÇô'
+  if (Number.isNaN(d.getTime())) return '–'
   return d.toLocaleString()
 }
 
 function sourceLabel(source: string): string {
   switch (source) {
     case 'push':
-      return 'Push (Outbox ÔåÆ Server)'
+      return 'Push (Outbox → Server)'
     case 'snapshot':
       return 'Pull (Snapshot laden)'
     case 'status':
@@ -406,11 +406,11 @@ function formatRelativ(iso: string | null): string {
     <RouterView />
   </template>
 
-  <!-- Gesch├╝tzte Routes: Header + Sidebar-Indikatoren -->
+  <!-- Geschützte Routes: Header + Sidebar-Indikatoren -->
   <div v-else class="app-shell">
     <div v-if="!online" class="offline-banner" role="status" aria-live="polite">
       <span class="dot"></span>
-      Offline ÔÇô Daten werden lokal gespeichert und sind verf├╝gbar.
+      Offline – Daten werden lokal gespeichert und sind verfügbar.
     </div>
     <header class="app-header">
       <div class="brand">
@@ -427,7 +427,7 @@ function formatRelativ(iso: string | null): string {
         <div v-if="auth.session" class="user-chip" :title="`Angemeldet als ${auth.session.email}`">
           <span class="user-role">{{ auth.rolle ?? 'user' }}</span>
           <span class="user-email">{{ auth.session.email }}</span>
-          <button type="button" class="logout-btn" title="Abmelden" @click="abmelden">ÔÅ╗</button>
+          <button type="button" class="logout-btn" title="Abmelden" @click="abmelden">⏻</button>
         </div>
         <button
           type="button"
@@ -438,9 +438,7 @@ function formatRelativ(iso: string | null): string {
               themeUmschalter === 'dark' ? 'light' : themeUmschalter === 'light' ? 'auto' : 'dark'
           "
         >
-          {{
-            themeUmschalter === 'dark' ? '­ƒîÖ' : themeUmschalter === 'light' ? 'ÔÿÇ´©Å' : '­ƒûÑ´©Å'
-          }}
+          {{ themeUmschalter === 'dark' ? '­ƒîÖ' : themeUmschalter === 'light' ? '☀️' : '­ƒûÑ´©Å' }}
         </button>
         <button
           type="button"
@@ -477,14 +475,14 @@ function formatRelativ(iso: string | null): string {
          Erscheint nur, wenn data-layout="mobile" gesetzt ist (siehe CSS). -->
     <nav v-if="auth.istAngemeldet" class="bottom-nav" aria-label="Hauptnavigation">
       <RouterLink to="/" exact-active-class="active">
-        <span class="bn-icon" aria-hidden="true">Ôîé</span>
+        <span class="bn-icon" aria-hidden="true">⌂</span>
         <span class="bn-label">{{ t('app.nav.dashboard') }}</span>
       </RouterLink>
       <RouterLink to="/artikel" active-class="active">
-        <span class="bn-icon" aria-hidden="true">Ôûª</span>
+        <span class="bn-icon" aria-hidden="true">▦</span>
         <span class="bn-label">{{ t('app.nav.artikel') }}</span>
       </RouterLink>
-      <RouterLink to="/scan" class="bn-fab" aria-label="Barcode-Scanner ├Âffnen">
+      <RouterLink to="/scan" class="bn-fab" aria-label="Barcode-Scanner öffnen">
         <span class="bn-fab-icon" aria-hidden="true">
           <svg
             viewBox="0 0 24 24"
@@ -503,7 +501,7 @@ function formatRelativ(iso: string | null): string {
         <span class="bn-label">Scan</span>
       </RouterLink>
       <RouterLink to="/buchungen" active-class="active">
-        <span class="bn-icon" aria-hidden="true">Ôçä</span>
+        <span class="bn-icon" aria-hidden="true">⇄</span>
         <span class="bn-label">{{ t('app.nav.buchungen') }}</span>
       </RouterLink>
     </nav>
@@ -537,11 +535,11 @@ function formatRelativ(iso: string | null): string {
         <a :href="repoUrl" target="_blank" rel="noopener noreferrer" class="version-footer-link"
           >icem0</a
         >
-        ┬À
+        ·
         <a :href="repoUrl" target="_blank" rel="noopener noreferrer" class="version-footer-link"
           >github.com/icem0/bma-lager</a
         >
-        ┬À MIT-Lizenz
+        · MIT-Lizenz
       </p>
       <div class="version-actions">
         <button
@@ -597,7 +595,7 @@ function formatRelativ(iso: string | null): string {
             <line x1="12" y1="16" x2="12.01" y2="16"></line>
           </svg>
         </button>
-        <button type="button" @click="closeVersion">Schlie├ƒen</button>
+        <button type="button" @click="closeVersion">Schließen</button>
       </div>
     </div>
 
@@ -663,18 +661,18 @@ function formatRelativ(iso: string | null): string {
             </dd>
           </template>
           <template v-if="sync.status.nextRetryAt">
-            <dt>N├ñchster Versuch</dt>
+            <dt>Nächster Versuch</dt>
             <dd>{{ formatIso(sync.status.nextRetryAt) }}</dd>
           </template>
         </dl>
         <details v-if="hasStuckItems(sync.status.lastFailure)" class="sync-diag-details">
           <summary>
-            H├ñngende Items ({{ sync.status.lastFailure!.stuckItems.length }} angezeigt)
+            Hängende Items ({{ sync.status.lastFailure!.stuckItems.length }} angezeigt)
           </summary>
           <ul class="sync-diag-list">
             <li v-for="it in sync.status.lastFailure!.stuckItems" :key="it.outboxId">
               <code class="mono">{{ it.entity }}/{{ it.op }}</code>
-              <span class="muted"> {{ it.payloadId.slice(0, 8) }}ÔÇª </span>
+              <span class="muted"> {{ it.payloadId.slice(0, 8) }}… </span>
               <span class="wert-warn"> Versuch {{ it.attempts }}: {{ it.lastError }} </span>
             </li>
           </ul>
@@ -688,20 +686,20 @@ function formatRelativ(iso: string | null): string {
             <li v-for="(e, idx) in sync.status.lastFailure.sampleErrors" :key="idx">
               <code class="mono">{{ e.code }}</code>
               <span>{{ e.message }}</span>
-              <span class="muted"> {{ e.id.slice(0, 8) }}ÔÇª </span>
+              <span class="muted"> {{ e.id.slice(0, 8) }}… </span>
             </li>
           </ul>
         </details>
       </div>
 
-      <h3>Datens├ñtze</h3>
+      <h3>Datensätze</h3>
       <table class="sync-counts">
         <thead>
           <tr>
             <th>Tabelle</th>
             <th>Lokal</th>
             <th>Server</th>
-            <th>╬ö</th>
+            <th>Δ</th>
           </tr>
         </thead>
         <tbody>
@@ -731,8 +729,8 @@ function formatRelativ(iso: string | null): string {
             :key="row.name"
           >
             <td>{{ row.name }}</td>
-            <td>{{ row.local ?? 'ÔÇô' }}</td>
-            <td>{{ row.server ?? 'ÔÇô' }}</td>
+            <td>{{ row.local ?? '–' }}</td>
+            <td>{{ row.server ?? '–' }}</td>
             <td
               :class="
                 row.local != null && row.server != null && row.local !== row.server
@@ -743,21 +741,21 @@ function formatRelativ(iso: string | null): string {
               {{
                 row.local != null && row.server != null
                   ? (row.server - row.local > 0 ? '+' : '') + (row.server - row.local)
-                  : 'ÔÇô'
+                  : '–'
               }}
             </td>
           </tr>
         </tbody>
       </table>
 
-      <p v-if="syncDetail === 'fetching'" class="hint">Aktualisiere StatusÔÇª</p>
+      <p v-if="syncDetail === 'fetching'" class="hint">Aktualisiere Status…</p>
       <p v-else-if="syncDetail === 'error'" class="hint wert-fehler">
         Konnte Server-Status nicht abrufen.
       </p>
       <p v-else-if="syncZustand === 'origin-unavailable'" class="hint wert-fehler">
-        Server liefert 5xx (z. B. Cloudflare 502) ÔÇö Origin ist nicht erreichbar.
+        Server liefert 5xx (z. B. Cloudflare 502) — Origin ist nicht erreichbar.
         <span v-if="sync.status.nextRetryAt">
-          N├ñchster automatischer Versuch um {{ formatIso(sync.status.nextRetryAt) }}.
+          Nächster automatischer Versuch um {{ formatIso(sync.status.nextRetryAt) }}.
         </span>
       </p>
       <p
@@ -772,10 +770,10 @@ function formatRelativ(iso: string | null): string {
         Beide Datenbanken sind konsistent.
       </p>
       <p v-else-if="syncZustand === 'diverged'" class="hint wert-warn">
-        Counts weichen ab ÔÇö ein Sync holt fehlende Datens├ñtze bzw. pusht lokale ├änderungen.
+        Counts weichen ab — ein Sync holt fehlende Datensätze bzw. pusht lokale Änderungen.
       </p>
       <p v-else-if="sync.status.pending > 0" class="hint wert-warn">
-        Lokale ├änderungen warten auf den Push zum Server.
+        Lokale Änderungen warten auf den Push zum Server.
       </p>
 
       <div class="sync-panel-actions">
@@ -785,7 +783,7 @@ function formatRelativ(iso: string | null): string {
           :disabled="sync.triggering || !online"
           @click="manuellSync"
         >
-          {{ sync.triggering ? 'SynchronisiereÔÇª' : 'Jetzt synchronisieren' }}
+          {{ sync.triggering ? 'Synchronisiere…' : 'Jetzt synchronisieren' }}
         </button>
         <button
           type="button"
@@ -799,9 +797,9 @@ function formatRelativ(iso: string | null): string {
           :disabled="dbResetPhase === 'laufend' || !online"
           @click="dbResetFrageStarten"
         >
-          Lokale DB l├Âschen
+          Lokale DB löschen
         </button>
-        <button type="button" @click="closeSyncPanel">Schlie├ƒen</button>
+        <button type="button" @click="closeSyncPanel">Schließen</button>
       </div>
 
       <div v-if="cacheResetPhase !== 'idle'" class="sync-cache-confirm" role="alertdialog">
@@ -809,7 +807,7 @@ function formatRelativ(iso: string | null): string {
           <strong>Service-Worker-Cache wirklich leeren?</strong>
         </p>
         <p class="sync-cache-confirm-detail">
-          Die App l├ñdt danach alle Dateien neu vom Server. Deine Buchungen und der Login bleiben
+          Die App lädt danach alle Dateien neu vom Server. Deine Buchungen und der Login bleiben
           erhalten (liegen in der Browser-Datenbank bzw. localStorage). Die Seite wird neu geladen.
         </p>
         <p v-if="cacheResetPhase === 'fehler' && cacheResetFehler" class="wert-fehler">
@@ -822,7 +820,7 @@ function formatRelativ(iso: string | null): string {
             :disabled="cacheResetPhase === 'laufend'"
             @click="cacheResetBestaetigen"
           >
-            {{ cacheResetPhase === 'laufend' ? 'Leere CacheÔÇª' : 'Ja, leeren' }}
+            {{ cacheResetPhase === 'laufend' ? 'Leere Cache…' : 'Ja, leeren' }}
           </button>
           <button
             type="button"
@@ -836,17 +834,17 @@ function formatRelativ(iso: string | null): string {
 
       <div v-if="dbResetPhase !== 'idle'" class="sync-cache-confirm" role="alertdialog">
         <p>
-          <strong>Lokale Datenbank wirklich l├Âschen?</strong>
+          <strong>Lokale Datenbank wirklich löschen?</strong>
         </p>
         <p class="sync-cache-confirm-detail">
-          Die IndexedDB wird komplett geleert und anschlie├ƒend mit einem frischen Snapshot vom
-          Server wieder bef├╝llt (Artikel, Standorte, Projekte, Buchungen, Einstellungen).
+          Die IndexedDB wird komplett geleert und anschließend mit einem frischen Snapshot vom
+          Server wieder befüllt (Artikel, Standorte, Projekte, Buchungen, Einstellungen).
           Ausstehende lokale Buchungen, die noch nicht zum Server gepusht wurden, gehen dabei
           verloren. Du bleibst angemeldet (JWT liegt in localStorage). Die Seite wird am Ende neu
           geladen.
         </p>
         <p class="sync-cache-confirm-detail">
-          Benutze das nur, wenn die normale Synchronisation h├ñngt oder die lokale DB korrupt ist.
+          Benutze das nur, wenn die normale Synchronisation hängt oder die lokale DB korrupt ist.
         </p>
         <p v-if="dbResetPhase === 'fehler' && dbResetFehler" class="wert-fehler">
           {{ dbResetFehler }}
@@ -859,9 +857,7 @@ function formatRelativ(iso: string | null): string {
             @click="dbResetBestaetigen"
           >
             {{
-              dbResetPhase === 'laufend'
-                ? 'L├Âsche & ziehe SnapshotÔÇª'
-                : 'Ja, l├Âschen & neu laden'
+              dbResetPhase === 'laufend' ? 'Lösche & ziehe Snapshot…' : 'Ja, löschen & neu laden'
             }}
           </button>
           <button type="button" :disabled="dbResetPhase === 'laufend'" @click="dbResetAbbrechen">
@@ -1497,7 +1493,7 @@ main {
 }
 
 :root[data-layout='mobile'] .app-header {
-  /* Auf Mobile nur Brand + Theme + Sync ÔÇö Rest wandert in Bottom-Nav/Profil. */
+  /* Auf Mobile nur Brand + Theme + Sync — Rest wandert in Bottom-Nav/Profil. */
   padding: 0.6rem 0.85rem;
 }
 :root[data-layout='mobile'] .app-header nav {
