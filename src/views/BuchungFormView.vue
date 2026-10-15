@@ -8,6 +8,7 @@ import { useBuchungStore } from '../stores/buchung'
 import { useAuthStore } from '../stores/auth'
 import type { BuchungsTyp } from '../db/types'
 import { NegativerBestandWarnung, PflichtfeldFehltError } from '../domain/errors'
+import { validiereBuchungsEingabe } from '../domain/buchung-form-validation'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -29,6 +30,7 @@ const projekt = ref<string>('')
 const kommentar = ref<string>('')
 const fehler = ref<string>('')
 const warnung = ref<string>('')
+const laufend = ref(false)
 
 onMounted(() => {
   if (!standortId.value) {
@@ -44,32 +46,25 @@ const mengeErforderlich = computed(() => typ.value !== 'inventur')
 const sollMengeErforderlich = computed(() => typ.value === 'inventur')
 
 async function speichern(): Promise<void> {
+  if (laufend.value) return
   fehler.value = ''
   warnung.value = ''
-  if (!artikelId.value) {
-    fehler.value = 'Artikel fehlt'
+
+  const eingabe = {
+    typ: typ.value,
+    artikelId: artikelId.value,
+    standortId: standortId.value,
+    zielStandortId: zielStandortId.value,
+    menge: menge.value,
+    sollMenge: sollMenge.value,
+  }
+  const feldFehler = validiereBuchungsEingabe(eingabe)
+  if (feldFehler) {
+    fehler.value = feldFehler
     return
   }
-  if (mengeErforderlich.value && (!menge.value || menge.value <= 0)) {
-    fehler.value = 'Menge muss > 0 sein'
-    return
-  }
-  if (sollMengeErforderlich.value && (sollMenge.value < 0 || Number.isNaN(sollMenge.value))) {
-    fehler.value = 'Soll-Menge fehlt oder ungültig'
-    return
-  }
-  if (!standortId.value) {
-    fehler.value = 'Standort fehlt'
-    return
-  }
-  if (typ.value === 'umlagerung' && !zielStandortId.value) {
-    fehler.value = 'Zielstandort fehlt'
-    return
-  }
-  if (typ.value === 'umlagerung' && zielStandortId.value === standortId.value) {
-    fehler.value = 'Quell- und Zielstandort sind identisch'
-    return
-  }
+
+  laufend.value = true
   const erstelltVon = auth.anzeigename.trim() || 'unbekannt'
   try {
     if (typ.value === 'einlagerung') {
@@ -122,6 +117,8 @@ async function speichern(): Promise<void> {
     } else {
       fehler.value = String(e)
     }
+  } finally {
+    laufend.value = false
   }
 }
 
@@ -172,7 +169,7 @@ function typIcon(wert: BuchungsTyp): string {
       </RouterLink>
     </header>
 
-    <form class="card buchung-card" @submit.prevent="speichern">
+    <form class="card buchung-card" :aria-busy="laufend || undefined" @submit.prevent="speichern">
       <fieldset class="typ-feldset">
         <legend>{{ t('view.buchung.form.typ') }}</legend>
         <div class="tile-group" role="radiogroup" :aria-label="t('view.buchung.form.typ')">
@@ -243,9 +240,7 @@ function typIcon(wert: BuchungsTyp): string {
             required
             :aria-label="t('view.buchung.form.menge')"
           />
-          <button type="button" :aria-label="`Menge um 1 erhöhen`" @click="stepper(1)">
-            +
-          </button>
+          <button type="button" :aria-label="`Menge um 1 erhöhen`" @click="stepper(1)">+</button>
         </div>
       </div>
 
@@ -283,19 +278,17 @@ function typIcon(wert: BuchungsTyp): string {
         <input v-model="kommentar" autocomplete="off" />
       </label>
 
-      <p v-if="fehler" class="fehler">{{ fehler }}</p>
-      <p v-if="warnung" class="hint hint-warn">{{ warnung }}</p>
-      <p v-if="standardStandort" class="hint">
-        Standard-Standort: {{ standardStandort.name }}
-      </p>
+      <p v-if="fehler" class="fehler" role="alert">{{ fehler }}</p>
+      <p v-if="warnung" class="hint hint-warn" role="status">{{ warnung }}</p>
+      <p v-if="standardStandort" class="hint">Standard-Standort: {{ standardStandort.name }}</p>
 
       <!-- Sticky Save-Bar: auf Mobile immer in Daumenreichweite,
            auf Desktop normale Form-Actions. -->
       <div class="sticky-form-bar">
-        <button type="submit" class="primary">
-          {{ t('view.buchung.form.speichern') }}
+        <button type="submit" class="primary" :disabled="laufend">
+          {{ laufend ? '…' : t('view.buchung.form.speichern') }}
         </button>
-        <button type="button" class="btn" @click="abbrechen">
+        <button type="button" class="btn" :disabled="laufend" @click="abbrechen">
           {{ t('view.buchung.form.abbrechen') }}
         </button>
       </div>

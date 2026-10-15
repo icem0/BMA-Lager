@@ -175,11 +175,14 @@ async function copyVersion(): Promise<void> {
       <!-- Setup-Formular: erster User -->
       <template v-else-if="modus === 'setup'">
         <p class="hint">
-          Noch kein Benutzer vorhanden. Lege den ersten Account an, danach läuft der
-          Login normal.
+          Noch kein Benutzer vorhanden. Lege den ersten Account an, danach läuft der Login normal.
         </p>
 
-        <form class="form" @submit.prevent="setupAbschliessen">
+        <form
+          class="form"
+          :aria-busy="setupLaufend || undefined"
+          @submit.prevent="setupAbschliessen"
+        >
           <label>
             <span>Anzeigename</span>
             <input
@@ -225,7 +228,7 @@ async function copyVersion(): Promise<void> {
               required
             />
           </label>
-          <p v-if="setupFehler" class="fehler">{{ setupFehler }}</p>
+          <p v-if="setupFehler" class="fehler" role="alert">{{ setupFehler }}</p>
 
           <div class="form-actions">
             <button type="submit" class="primary" :disabled="setupLaufend">
@@ -239,7 +242,7 @@ async function copyVersion(): Promise<void> {
       <template v-else>
         <p class="hint">Bitte mit E-Mail und Passwort anmelden.</p>
 
-        <form class="form" @submit.prevent="anmelden">
+        <form class="form" :aria-busy="laufend || undefined" @submit.prevent="anmelden">
           <label>
             <span>E-Mail</span>
             <input
@@ -262,7 +265,7 @@ async function copyVersion(): Promise<void> {
               required
             />
           </label>
-          <p v-if="fehler" class="fehler">{{ fehler }}</p>
+          <p v-if="fehler" class="fehler" role="alert">{{ fehler }}</p>
 
           <div class="form-actions">
             <button type="submit" class="primary" :disabled="laufend">
@@ -308,19 +311,13 @@ async function copyVersion(): Promise<void> {
       </dl>
       <p class="version-footer">
         by
-        <a
-          :href="repoUrl"
-          target="_blank"
-          rel="noopener noreferrer"
-          class="version-footer-link"
-        >icem0</a>
+        <a :href="repoUrl" target="_blank" rel="noopener noreferrer" class="version-footer-link"
+          >icem0</a
+        >
         ·
-        <a
-          :href="repoUrl"
-          target="_blank"
-          rel="noopener noreferrer"
-          class="version-footer-link"
-        >github.com/icem0/bma-lager</a>
+        <a :href="repoUrl" target="_blank" rel="noopener noreferrer" class="version-footer-link"
+          >github.com/icem0/bma-lager</a
+        >
         · MIT-Lizenz
       </p>
       <div class="version-actions">

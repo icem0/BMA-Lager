@@ -26,35 +26,62 @@ const leeresFormular = (): Form => ({
 const formularOffen = ref(false)
 const formular = ref<Form>(leeresFormular())
 const archivierteAnzeigen = ref(false)
+const fehler = ref('')
+const laufend = ref(false)
 
 function reset(): void {
   formular.value = leeresFormular()
+  fehler.value = ''
 }
 
 async function anlegen(): Promise<void> {
-  if (!formular.value.name.trim()) return
-  await standortStore.anlegen({
-    name: formular.value.name.trim(),
-    typ: formular.value.typ,
-    projekt: formular.value.projekt.trim() || null,
-    kennzeichen: formular.value.kennzeichen.trim() || null,
-    standard: formular.value.standard,
-  })
-  formularOffen.value = false
-  reset()
+  if (laufend.value) return
+  fehler.value = ''
+  if (!formular.value.name.trim()) {
+    fehler.value = 'Name fehlt.'
+    return
+  }
+  laufend.value = true
+  try {
+    await standortStore.anlegen({
+      name: formular.value.name.trim(),
+      typ: formular.value.typ,
+      projekt: formular.value.projekt.trim() || null,
+      kennzeichen: formular.value.kennzeichen.trim() || null,
+      standard: formular.value.standard,
+    })
+    formularOffen.value = false
+    reset()
+  } catch (e) {
+    fehler.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    laufend.value = false
+  }
 }
 
 async function setStandard(id: string): Promise<void> {
-  await standortStore.setStandard(id)
+  try {
+    await standortStore.setStandard(id)
+  } catch (e) {
+    fehler.value = e instanceof Error ? e.message : String(e)
+  }
 }
 
 async function archivieren(id: string): Promise<void> {
   if (!confirm('Archivieren?')) return
-  await standortStore.archivieren(id)
+  try {
+    await standortStore.archivieren(id)
+  } catch (e) {
+    fehler.value = e instanceof Error ? e.message : String(e)
+  }
 }
 
 async function wiederherstellen(id: string): Promise<void> {
-  await standortStore.wiederherstellen(id)
+  try {
+    await standortStore.wiederherstellen(id)
+  } catch (e) {
+    fehler.value = e instanceof Error ? e.message : String(e)
+  }
 }
 
 const typOptionen: StandortTyp[] = ['lager', 'auto', 'baustelle', 'extern']
@@ -76,14 +103,14 @@ const istLeer = computed(() => sichtbareStandorte.value.length === 0 && !formula
     </header>
 
     <div v-if="formularOffen" class="card">
-      <form class="form" @submit.prevent="anlegen">
+      <form class="form" :aria-busy="laufend || undefined" @submit.prevent="anlegen">
         <label>
           <span>{{ t('view.standort.form.name') }}</span>
-          <input v-model="formular.name" required autocomplete="off" />
+          <input v-model="formular.name" required autocomplete="off" :disabled="laufend" />
         </label>
         <label>
           <span>{{ t('view.standort.form.typ') }}</span>
-          <select v-model="formular.typ">
+          <select v-model="formular.typ" :disabled="laufend">
             <option v-for="opt in typOptionen" :key="opt" :value="opt">
               {{ t(`view.standort.typen.${opt}`) }}
             </option>
@@ -92,28 +119,32 @@ const istLeer = computed(() => sichtbareStandorte.value.length === 0 && !formula
         <div class="row">
           <label>
             <span>{{ t('view.standort.form.projekt') }}</span>
-            <input v-model="formular.projekt" autocomplete="off" />
+            <input v-model="formular.projekt" autocomplete="off" :disabled="laufend" />
           </label>
           <label>
             <span>{{ t('view.standort.form.kennzeichen') }}</span>
-            <input v-model="formular.kennzeichen" autocomplete="off" />
+            <input v-model="formular.kennzeichen" autocomplete="off" :disabled="laufend" />
           </label>
         </div>
         <label class="check">
-          <input v-model="formular.standard" type="checkbox" />
+          <input v-model="formular.standard" type="checkbox" :disabled="laufend" />
           <span>{{ t('view.standort.form.standard') }}</span>
         </label>
 
+        <p v-if="fehler" class="fehler" role="alert">{{ fehler }}</p>
+
         <div class="form-actions">
-          <button type="submit" class="primary" :disabled="!formular.name.trim()">
-            {{ t('view.standort.form.speichern') }}
+          <button type="submit" class="primary" :disabled="!formular.name.trim() || laufend">
+            {{ laufend ? '…' : t('view.standort.form.speichern') }}
           </button>
-          <button type="button" @click="((formularOffen = false), reset())">
+          <button type="button" :disabled="laufend" @click="((formularOffen = false), reset())">
             {{ t('view.standort.form.abbrechen') }}
           </button>
         </div>
       </form>
     </div>
+
+    <p v-if="fehler && !formularOffen" class="fehler" role="alert">{{ fehler }}</p>
 
     <p v-if="istLeer" class="empty-state">
       {{ t('view.standort.leer') }}

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink, useRouter } from 'vue-router'
 import { useSettingsStore } from '../stores/settings'
@@ -25,20 +25,37 @@ watch(
 
 const standorte = computed(() => standort.aktive)
 const statusmeldung = ref('')
+const laufend = ref(false)
+let statusTimer: ReturnType<typeof setTimeout> | null = null
 
 async function speichern(): Promise<void> {
-  await settings.setSprache(sprache.value)
-  await settings.setStandardStandort(standardId.value || null)
-  statusmeldung.value = t('view.settings.gespeichert')
-  setTimeout(() => {
-    statusmeldung.value = ''
-  }, 1500)
+  if (laufend.value) return
+  laufend.value = true
+  try {
+    await settings.setSprache(sprache.value)
+    await settings.setStandardStandort(standardId.value || null)
+    statusmeldung.value = t('view.settings.gespeichert')
+    if (statusTimer !== null) clearTimeout(statusTimer)
+    statusTimer = setTimeout(() => {
+      statusmeldung.value = ''
+      statusTimer = null
+    }, 1500)
+  } finally {
+    laufend.value = false
+  }
 }
 
 function abmelden(): void {
   auth.abmelden()
   void router.push('/login')
 }
+
+onBeforeUnmount(() => {
+  if (statusTimer !== null) {
+    clearTimeout(statusTimer)
+    statusTimer = null
+  }
+})
 </script>
 
 <template>
@@ -48,25 +65,29 @@ function abmelden(): void {
     </header>
 
     <div class="card">
-      <form class="form" @submit.prevent="speichern">
+      <form class="form" :aria-busy="laufend || undefined" @submit.prevent="speichern">
         <label>
           <span>{{ t('view.settings.sprache') }}</span>
-          <select v-model="sprache">
+          <select v-model="sprache" :disabled="laufend">
             <option value="de">{{ t('view.settings.sprachen.de') }}</option>
             <option value="en">{{ t('view.settings.sprachen.en') }}</option>
           </select>
         </label>
         <label>
           <span>{{ t('view.settings.standardStandort') }}</span>
-          <select v-model="standardId">
+          <select v-model="standardId" :disabled="laufend">
             <option value="">— {{ t('view.settings.nichtGelegt') }} —</option>
             <option v-for="s in standorte" :key="s.id" :value="s.id">{{ s.name }}</option>
           </select>
         </label>
 
         <div class="form-actions">
-          <button type="submit" class="primary">{{ t('view.settings.speichern') }}</button>
-          <span v-if="statusmeldung" class="hint hint-ok">{{ statusmeldung }}</span>
+          <button type="submit" class="primary" :disabled="laufend">
+            {{ laufend ? '…' : t('view.settings.speichern') }}
+          </button>
+          <span v-if="statusmeldung" class="hint hint-ok" role="status" aria-live="polite">{{
+            statusmeldung
+          }}</span>
         </div>
       </form>
     </div>

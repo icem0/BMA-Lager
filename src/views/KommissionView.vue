@@ -18,8 +18,10 @@ const original = computed<Buchung | undefined>(() =>
 )
 const neuesProjekt = ref<string>('')
 const fehler = ref<string>('')
+const laufend = ref(false)
 
 async function speichern(): Promise<void> {
+  if (laufend.value) return
   fehler.value = ''
   if (!original.value) {
     fehler.value = 'Buchung nicht gefunden.'
@@ -29,6 +31,7 @@ async function speichern(): Promise<void> {
     fehler.value = 'Projekt fehlt.'
     return
   }
+  laufend.value = true
   const erstelltVon = auth.anzeigename.trim() || 'unbekannt'
   try {
     await buchungStore.mu.kommission({
@@ -39,6 +42,8 @@ async function speichern(): Promise<void> {
     void router.push(`/artikel/${original.value.artikelId}`)
   } catch (e) {
     fehler.value = String(e)
+  } finally {
+    laufend.value = false
   }
 }
 
@@ -70,22 +75,54 @@ function abbrechen(): void {
     </div>
 
     <div class="card">
-      <form class="form" @submit.prevent="speichern">
+      <form class="form" :aria-busy="laufend || undefined" @submit.prevent="speichern">
         <label>
           <span>{{ t('view.kommission.neuesProjekt') }} *</span>
-          <input v-model="neuesProjekt" required autocomplete="off" />
+          <input
+            v-model="neuesProjekt"
+            required
+            autocomplete="off"
+            inputmode="text"
+            :disabled="laufend"
+          />
         </label>
 
-        <p v-if="fehler" class="fehler">{{ fehler }}</p>
+        <p v-if="fehler" class="fehler" role="alert">{{ fehler }}</p>
 
         <div class="form-actions">
-          <button type="submit" class="primary">{{ t('view.kommission.speichern') }}</button>
-          <button type="button" @click="abbrechen">{{ t('view.kommission.abbrechen') }}</button>
+          <button type="submit" class="primary" :disabled="laufend">
+            {{ laufend ? '…' : t('view.kommission.speichern') }}
+          </button>
+          <button type="button" :disabled="laufend" @click="abbrechen">
+            {{ t('view.kommission.abbrechen') }}
+          </button>
         </div>
       </form>
     </div>
   </section>
   <section v-else class="view">
-    <p class="muted">Lade…</p>
+    <p class="muted" role="status" aria-live="polite">
+      <span class="kommission-spinner" aria-hidden="true"></span>
+      Lade…
+    </p>
   </section>
 </template>
+
+<style scoped>
+.kommission-spinner {
+  display: inline-block;
+  width: 1rem;
+  height: 1rem;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: kommission-spin 0.8s linear infinite;
+  margin-right: 0.5rem;
+  vertical-align: middle;
+}
+@keyframes kommission-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+</style>

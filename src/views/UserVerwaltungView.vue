@@ -111,23 +111,29 @@ function formatDatum(iso: string | null): string {
     </p>
 
     <div v-if="formularOffen" class="card">
-      <form class="form" @submit.prevent="anlegen">
+      <form class="form" :aria-busy="laufend || undefined" @submit.prevent="anlegen">
         <label>
           <span>E-Mail</span>
-          <input v-model="email" type="email" required autocomplete="off" />
+          <input v-model="email" type="email" required autocomplete="off" :disabled="laufend" />
         </label>
         <label>
           <span>Passwort (≥ {{ MIN_PASSWORT_LAENGE }} Zeichen)</span>
-          <input v-model="passwort" type="password" required autocomplete="new-password" />
+          <input
+            v-model="passwort"
+            type="password"
+            required
+            autocomplete="new-password"
+            :disabled="laufend"
+          />
         </label>
         <label>
           <span>Rolle</span>
-          <select v-model="rolle">
+          <select v-model="rolle" :disabled="laufend">
             <option value="user">User</option>
             <option value="admin">Admin</option>
           </select>
         </label>
-        <p v-if="fehler" class="fehler">{{ fehler }}</p>
+        <p v-if="fehler" class="fehler" role="alert">{{ fehler }}</p>
         <div class="form-actions">
           <button type="submit" class="primary" :disabled="laufend">
             {{ laufend ? 'Lege an …' : 'Anlegen' }}

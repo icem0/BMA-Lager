@@ -116,3 +116,30 @@ explizit, pro-PC konfigurierbar und braucht keinen versteckten Hook.
 
 Siehe `README.md` → „Lokales Test-Setup" für die Erstinstallation
 (Docker Desktop, WSL 2, `.env`, `docker-compose.override.yml`).
+
+## Finetuning-Runden — Abschluss-Status
+
+Jede Finetuning-Runde (Bereich 1–N) endet mit einem klaren **Commit-und-Push-Status**
+in der letzten Antwort des Agents an den User. Das Format ist verbindlich:
+
+```
+Commit-Status: committed <hash> | not committed | partially committed
+Push-Status:   pushed to origin/<branch> | not pushed | rejected (<Grund>)
+```
+
+**Regeln:**
+
+- Der Agent committed und pusht **nur Dateien, die im aktuellen Auftrag
+  geändert oder angelegt wurden**. Dateien mit Pre-existing-Modifikationen
+  (z. B. aus einer früheren, nicht abgeschlossenen Sitzung) werden **nicht
+  mitgenommen** — sie werden explizit aufgelistet und der User entscheidet.
+- Prettier-/`lint:fix`-Auto-Formatierungen in **nicht angefassten Dateien**
+  werden mit committet, wenn sie im selben Commit-Lauf anfallen — sonst
+  verwirft der Agent sie (`git restore --staged`).
+- Untracked Files, die nicht zum aktuellen Auftrag gehören, bleiben
+  untracked; der Agent weist explizit darauf hin.
+- Nach dem Push bestätigt der Agent die Remote-SHA (`git rev-parse
+  origin/<branch>`) und nennt sie in der Abschluss-Antwort.
+- Wird der Auftrag ohne Push abgeschlossen (z. B. weil der User keinen
+  Push angefordert hat, oder weil er fehlgeschlagen ist), sagt der Agent
+  das **explizit** — Stillschweigen ist nicht zulässig.

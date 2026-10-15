@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute, useRouter, RouterLink } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useArtikelStore } from '../stores/artikel'
@@ -35,11 +35,22 @@ function nameStandort(id: string): string {
   return standortStore.byId(id)?.name ?? '—'
 }
 
+const archivLaufend = ref(false)
+const archivFehler = ref('')
+
 async function archivieren(): Promise<void> {
-  if (!artikel.value) return
+  if (!artikel.value || archivLaufend.value) return
   if (!confirm(t('view.artikel.detail.archivierenFrage'))) return
-  await artikelStore.archivieren(artikel.value.id)
-  void router.push('/artikel')
+  archivLaufend.value = true
+  archivFehler.value = ''
+  try {
+    await artikelStore.archivieren(artikel.value.id)
+    void router.push('/artikel')
+  } catch (e) {
+    archivFehler.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    archivLaufend.value = false
+  }
 }
 
 function formatDatum(iso: string): string {
@@ -64,12 +75,15 @@ function formatDatum(iso: string): string {
           v-if="artikel.status !== 'archiviert'"
           type="button"
           class="danger"
+          :disabled="archivLaufend"
           @click="archivieren"
         >
-          {{ t('view.artikel.detail.archivieren') }}
+          {{ archivLaufend ? '…' : t('view.artikel.detail.archivieren') }}
         </button>
       </div>
     </header>
+
+    <p v-if="archivFehler" class="fehler" role="alert">{{ archivFehler }}</p>
 
     <div class="card">
       <dl class="meta">

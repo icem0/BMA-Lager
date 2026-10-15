@@ -40,7 +40,7 @@ async function speichern(): Promise<void> {
         Dein Passwort wurde zurückgesetzt. Bitte vergib ein neues.
       </p>
 
-      <form class="form" @submit.prevent="speichern">
+      <form class="form" :aria-busy="laufend || undefined" @submit.prevent="speichern">
         <label v-if="!erzwingt">
           <span>Aktuelles Passwort</span>
           <input
@@ -49,17 +49,33 @@ async function speichern(): Promise<void> {
             autocomplete="current-password"
             required
             autofocus
+            :disabled="laufend"
           />
         </label>
         <label>
           <span>Neues Passwort (≥ 8 Zeichen, mind. 1 Ziffer, 1 Buchstabe)</span>
-          <input v-model="neues" type="password" autocomplete="new-password" required />
+          <input
+            v-model="neues"
+            type="password"
+            autocomplete="new-password"
+            required
+            minlength="8"
+            pattern="(?=.*\d)(?=.*[A-Za-z]).{8,}"
+            :title="'Mindestens 8 Zeichen, davon mindestens 1 Ziffer und 1 Buchstabe'"
+            :disabled="laufend"
+          />
         </label>
         <label>
           <span>Neues Passwort bestätigen</span>
-          <input v-model="neues2" type="password" autocomplete="new-password" required />
+          <input
+            v-model="neues2"
+            type="password"
+            autocomplete="new-password"
+            required
+            :disabled="laufend"
+          />
         </label>
-        <p v-if="fehler" class="fehler">{{ fehler }}</p>
+        <p v-if="fehler" class="fehler" role="alert">{{ fehler }}</p>
         <div class="form-actions">
           <button type="submit" class="primary" :disabled="laufend">
             {{ laufend ? 'Speichere …' : 'Speichern' }}

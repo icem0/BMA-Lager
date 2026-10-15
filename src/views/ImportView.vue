@@ -73,22 +73,52 @@ async function onLagerDateiChange(e: Event): Promise<void> {
   const file = (e.target as HTMLInputElement).files?.[0] ?? null
   lagerDatei.value = file
   if (!file) return
-  const text = await file.text()
-  const parsed = parseCsv(text)
-  lagerParsed.value = parsed
-  lagerMapping.value = defaultArtikelMapping(parsed.headers)
-  bericht.value = null
+  try {
+    const text = await file.text()
+    const parsed = parseCsv(text)
+    if (parsed.headers.length === 0) {
+      fehler.value = 'Lager.csv: keine Spalten erkannt. Ist die Datei eine CSV?'
+      lagerDatei.value = null
+      lagerParsed.value = null
+      return
+    }
+    lagerParsed.value = parsed
+    lagerMapping.value = defaultArtikelMapping(parsed.headers)
+    bericht.value = null
+    fehler.value = ''
+  } catch (err) {
+    fehler.value = `Lager.csv konnte nicht gelesen werden: ${
+      err instanceof Error ? err.message : String(err)
+    }`
+    lagerDatei.value = null
+    lagerParsed.value = null
+  }
 }
 
 async function onWarenDateiChange(e: Event): Promise<void> {
   const file = (e.target as HTMLInputElement).files?.[0] ?? null
   warenDatei.value = file
   if (!file) return
-  const text = await file.text()
-  const parsed = parseCsv(text)
-  warenParsed.value = parsed
-  warenMapping.value = defaultWarenMapping(parsed.headers)
-  bericht.value = null
+  try {
+    const text = await file.text()
+    const parsed = parseCsv(text)
+    if (parsed.headers.length === 0) {
+      fehler.value = 'Warenfluss.csv: keine Spalten erkannt. Ist die Datei eine CSV?'
+      warenDatei.value = null
+      warenParsed.value = null
+      return
+    }
+    warenParsed.value = parsed
+    warenMapping.value = defaultWarenMapping(parsed.headers)
+    bericht.value = null
+    fehler.value = ''
+  } catch (err) {
+    fehler.value = `Warenfluss.csv konnte nicht gelesen werden: ${
+      err instanceof Error ? err.message : String(err)
+    }`
+    warenDatei.value = null
+    warenParsed.value = null
+  }
 }
 
 function validieren(): void {
@@ -209,8 +239,10 @@ async function backupSpeichern(): Promise<void> {
         </small>
         <small v-else class="hint hint-warn">noch nicht geladen</small>
       </label>
-      <button type="button" @click="backupSpeichern">Backup exportieren</button>
+      <button type="button" :disabled="laufend" @click="backupSpeichern">Backup exportieren</button>
     </div>
+
+    <p v-if="fehler" class="fehler" role="alert">{{ fehler }}</p>
 
     <div v-if="lagerParsed" class="card">
       <h2>2a. Mapping Lager</h2>
@@ -258,7 +290,7 @@ async function backupSpeichern(): Promise<void> {
       </table>
     </div>
 
-    <div v-if="lagerParsed || warenParsed" class="actions">
+    <div v-if="lagerParsed || warenParsed" class="actions" :aria-busy="laufend || undefined">
       <button
         type="button"
         :disabled="!lagerOk || laufend"
@@ -305,8 +337,6 @@ async function backupSpeichern(): Promise<void> {
         </li>
       </ul>
     </div>
-
-    <p v-if="fehler" class="fehler">{{ fehler }}</p>
 
     <p class="hint">{{ t('app.title') }} · Offline-first · Keine Cloud-Aufrufe</p>
   </section>

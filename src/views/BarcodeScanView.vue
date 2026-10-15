@@ -34,14 +34,14 @@ async function codeVerarbeiten(code: string, _format: string): Promise<void> {
   const artikel = artikelStore.artikel.find((a) => a.bestellnummer === code || a.id === code)
   if (artikel) {
     void router.push({ name: 'buchung-neu', query: { artikelId: artikel.id } })
+    return
+  }
+  // Nicht gefunden — User fragen
+  const anlegen = confirm(`Code "${code}" nicht im Bestand. Neuen Artikel anlegen?`)
+  if (anlegen) {
+    void router.push({ name: 'artikel-neu', query: { bestellnummer: code } })
   } else {
-    // Nicht gefunden — User fragen
-    const anlegen = confirm(`Code "${code}" nicht im Bestand. Neuen Artikel anlegen?`)
-    if (anlegen) {
-      void router.push({ name: 'artikel-neu', query: { bestellnummer: code } })
-    } else {
-      gefunden.value = null
-    }
+    gefunden.value = null
   }
 }
 
@@ -49,6 +49,11 @@ function manuellScannen(): void {
   const code = manuelleEingabe.value.trim()
   if (!code) return
   void codeVerarbeiten(code, 'manual')
+}
+
+async function scannerNeustarten(): Promise<void> {
+  stop()
+  if (videoEl.value) await start(videoEl.value)
 }
 
 onMounted(async () => {
@@ -66,7 +71,13 @@ onBeforeUnmount(() => stop())
       <p class="hint">Halte die Kamera auf den Barcode des Artikels.</p>
     </header>
 
-    <div class="scanner-area" :class="{ 'is-ok': gefunden, 'is-err': scannerFehler }">
+    <div
+      class="scanner-area"
+      :class="{ 'is-ok': gefunden, 'is-err': scannerFehler }"
+      role="region"
+      aria-label="Kamera-Vorschau"
+      :aria-busy="!aktiv && !scannerFehler ? 'true' : undefined"
+    >
       <video v-show="aktiv" ref="videoEl" class="scanner-video" playsinline muted autoplay></video>
 
       <!-- Reticle: zeigt dem User, wohin er den Barcode halten soll. -->
@@ -85,15 +96,18 @@ onBeforeUnmount(() => stop())
         </div>
       </div>
 
-      <div v-if="scannerFehler" class="scanner-overlay scanner-error">
+      <div v-if="scannerFehler" class="scanner-overlay scanner-error" role="alert">
         <div class="scanner-status">
           <p><strong>Kamera nicht verfügbar</strong></p>
           <p class="scanner-error-detail">{{ scannerFehler }}</p>
           <p class="hint">Tipp: Browser-Berechtigung erteilen oder Code unten manuell eingeben.</p>
+          <button type="button" class="scanner-retry" @click="scannerNeustarten">
+            Erneut versuchen
+          </button>
         </div>
       </div>
 
-      <div v-if="gefunden" class="scanner-overlay scanner-found">
+      <div v-if="gefunden" class="scanner-overlay scanner-found" role="status" aria-live="polite">
         <div class="scanner-status">
           <p class="scanner-found-label">Erkannt</p>
           <code class="scanner-found-code">{{ gefunden }}</code>
@@ -106,10 +120,11 @@ onBeforeUnmount(() => stop())
         v-model="manuelleEingabe"
         type="text"
         inputmode="text"
+        autocomplete="off"
         placeholder="Oder Code manuell eingeben …"
         aria-label="Code manuell eingeben"
       />
-      <button type="submit" class="primary">Übernehmen</button>
+      <button type="submit" class="primary" :disabled="!manuelleEingabe.trim()">Übernehmen</button>
     </form>
 
     <p class="hint hint-bottom">
@@ -240,6 +255,21 @@ onBeforeUnmount(() => stop())
   color: rgba(255, 255, 255, 0.7);
   font-size: 0.8rem;
   margin-top: 0.5rem;
+}
+.scanner-retry {
+  margin-top: 0.6rem;
+  padding: 0.45rem 0.85rem;
+  background: var(--accent);
+  color: white;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+}
+.scanner-retry:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
 }
 .scanner-found {
   background: rgba(74, 222, 128, 0.85);

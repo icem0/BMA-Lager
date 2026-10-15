@@ -29,10 +29,12 @@ const zeilen = computed<Buchung[]>(() => {
     if (artikelFilter.value && b.artikelId !== artikelFilter.value) return false
     return true
   })
-  return gefiltert.slice().sort(
-    (a, b) => new Date(b.erstelltAm).getTime() - new Date(a.erstelltAm).getTime(),
-  )
+  return gefiltert
+    .slice()
+    .sort((a, b) => new Date(b.erstelltAm).getTime() - new Date(a.erstelltAm).getTime())
 })
+
+const stornoId = ref<string | null>(null)
 
 function nameArtikel(id: string): string {
   return artikelStore.byId(id)?.titel ?? '—'
@@ -54,19 +56,27 @@ function formatDatum(iso: string): string {
 
 function formatDatumKurz(iso: string): string {
   const d = new Date(iso)
-  return d.toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' })
-    + ' '
-    + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+  return (
+    d.toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' }) +
+    ' ' +
+    d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+  )
 }
 
 async function stornieren(b: Buchung): Promise<void> {
   if (istStorniert(b)) return
+  if (stornoId.value !== null) return
   if (!confirm('Stornieren?')) return
-  await buchungStore.mu.stornieren({
-    buchungId: b.id,
-    grund: 'Storno aus Buchungsliste',
-    erstelltVon: '',
-  })
+  stornoId.value = b.id
+  try {
+    await buchungStore.mu.stornieren({
+      buchungId: b.id,
+      grund: 'Storno aus Buchungsliste',
+      erstelltVon: '',
+    })
+  } finally {
+    stornoId.value = null
+  }
 }
 </script>
 
@@ -123,9 +133,10 @@ async function stornieren(b: Buchung): Promise<void> {
               v-if="!istStorniert(b) && b.typ !== 'kommission'"
               type="button"
               class="danger"
+              :disabled="stornoId === b.id"
               @click="stornieren(b)"
             >
-              Storno
+              {{ stornoId === b.id ? 'Storniere…' : 'Storno' }}
             </button>
             <RouterLink v-if="b.typ === 'kommission'" :to="`/kommission/${b.id}`" class="btn">
               …
@@ -136,22 +147,21 @@ async function stornieren(b: Buchung): Promise<void> {
     </table>
 
     <ul v-if="zeilen.length > 0" class="card-list mobile-only" role="list">
-      <li v-for="b in zeilen" :key="b.id" class="card-list-item" :class="{ storno: istStorniert(b) }">
+      <li
+        v-for="b in zeilen"
+        :key="b.id"
+        class="card-list-item"
+        :class="{ storno: istStorniert(b) }"
+      >
         <div class="card-list-title-row">
           <span class="card-list-title">{{ nameArtikel(b.artikelId) }}</span>
-          <span
-            class="num"
-            :class="b.menge > 0 ? 'num-plus' : b.menge < 0 ? 'num-minus' : ''"
-          >
+          <span class="num" :class="b.menge > 0 ? 'num-plus' : b.menge < 0 ? 'num-minus' : ''">
             {{ b.menge > 0 ? '+' : '' }}{{ b.menge }}
           </span>
         </div>
         <div class="card-list-meta">
           <span class="badge">{{ formatTyp(b.typ) }}</span>
-          <span
-            class="status-badge"
-            :class="istStorniert(b) ? 'status-storno' : 'status-aktiv'"
-          >
+          <span class="status-badge" :class="istStorniert(b) ? 'status-storno' : 'status-aktiv'">
             {{ statusLabel(b) }}
           </span>
           <span class="muted">{{ nameStandort(b.standortId) }}</span>
@@ -163,9 +173,10 @@ async function stornieren(b: Buchung): Promise<void> {
             v-if="!istStorniert(b) && b.typ !== 'kommission'"
             type="button"
             class="danger"
+            :disabled="stornoId === b.id"
             @click="stornieren(b)"
           >
-            Storno
+            {{ stornoId === b.id ? 'Storniere…' : 'Storno' }}
           </button>
           <RouterLink v-if="b.typ === 'kommission'" :to="`/kommission/${b.id}`" class="btn">
             Kommission
