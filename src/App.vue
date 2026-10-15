@@ -14,6 +14,7 @@ import { getApiBaseUrl } from './auth/api'
 import { clearAppCacheAndReload } from './services/sync/clear-cache'
 import { resetLocalDbAndPull } from './services/sync/reset-local-db'
 import { version, commit, branch, buildDate } from './version'
+import { useDevMode } from './composables/useDevMode'
 
 // Responsive Layout-Umschaltung: <html data-layout="mobile|desktop">.
 // CSS nutzt das, um Bottom-Nav, FAB und Mobile-spezifische Helfer zu zeigen/verbergen.
@@ -42,6 +43,7 @@ const projekt = useProjektStore()
 const audit = useAuditStore()
 const auth = useAuthStore()
 const sync = useSyncStore()
+const { active: devModeActive, tooltip: devModeTooltip } = useDevMode()
 
 // Public-Routen zeigen kein Header-Layout.
 const istPublicRoute = computed(() => route.meta.public === true)
@@ -424,6 +426,14 @@ function formatRelativ(iso: string | null): string {
         <RouterLink to="/einstellungen">{{ t('app.nav.einstellungen') }}</RouterLink>
       </nav>
       <div class="header-right">
+        <div
+          v-if="devModeActive"
+          class="dev-badge"
+          :title="devModeTooltip"
+          aria-label="Development-Modus aktiv"
+        >
+          DEV MODE
+        </div>
         <div v-if="auth.session" class="user-chip" :title="`Angemeldet als ${auth.session.email}`">
           <span class="user-role">{{ auth.rolle ?? 'user' }}</span>
           <span class="user-email">{{ auth.session.email }}</span>
@@ -438,7 +448,7 @@ function formatRelativ(iso: string | null): string {
               themeUmschalter === 'dark' ? 'light' : themeUmschalter === 'light' ? 'auto' : 'dark'
           "
         >
-          {{ themeUmschalter === 'dark' ? '­ƒîÖ' : themeUmschalter === 'light' ? '☀️' : '­ƒûÑ´©Å' }}
+          {{ themeUmschalter === 'dark' ? '🌙' : themeUmschalter === 'light' ? '☀️' : '🖥️' }}
         </button>
         <button
           type="button"
@@ -960,6 +970,20 @@ function formatRelativ(iso: string | null): string {
   display: flex;
   align-items: center;
   gap: 0.6rem;
+}
+
+.dev-badge {
+  background: #ff7a00;
+  color: #1a0a00;
+  padding: 0.25rem 0.55rem;
+  border-radius: var(--radius-sm);
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  cursor: help;
+  box-shadow: 0 0 0 2px rgba(255, 122, 0, 0.25);
+  user-select: none;
 }
 
 .user-chip {
